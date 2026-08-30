@@ -1,4 +1,5 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { Platform } from 'react-native';
 
 import type {
   CartItem,
@@ -176,7 +177,7 @@ export async function completeSale(
 
   let totalCents = 0;
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  const recordSale = async (transaction: SQLiteDatabase) => {
     const verifiedItems: CartItem[] = [];
 
     for (const item of cart) {
@@ -238,7 +239,13 @@ export async function completeSale(
         item.priceCents * item.quantity,
       );
     }
-  });
+  };
+
+  if (Platform.OS === 'web') {
+    await db.withTransactionAsync(() => recordSale(db));
+  } else {
+    await db.withExclusiveTransactionAsync(recordSale);
+  }
 
   return {
     receiptNumber,
