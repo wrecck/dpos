@@ -52,7 +52,7 @@ const tabs: {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" backgroundColor={colors.primaryDark} />
+      <StatusBar style="light" />
       <Suspense fallback={<LoadingScreen />}>
         <SQLiteProvider
           databaseName="dpos.db"
