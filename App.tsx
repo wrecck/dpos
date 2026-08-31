@@ -79,7 +79,10 @@ function AppShell() {
         : 'Business activity';
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={['top', 'bottom', 'left', 'right']}
+    >
       <View style={styles.header}>
         <View>
           <Text style={styles.brand}>DPOS</Text>
