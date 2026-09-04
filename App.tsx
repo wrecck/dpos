@@ -8,6 +8,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import {
@@ -69,6 +70,11 @@ export default function App() {
 function AppShell() {
   const [activeTab, setActiveTab] = useState<Tab>('register');
   const [revision, setRevision] = useState(0);
+  const { height, width } = useWindowDimensions();
+  const tabletBottomClearance =
+    Platform.OS === 'android' && Math.min(width, height) >= 600
+      ? Math.round(height * 0.15)
+      : 0;
 
   const dataChanged = () => setRevision((current) => current + 1);
   const title =
@@ -136,6 +142,14 @@ function AppShell() {
           );
         })}
       </View>
+      {tabletBottomClearance > 0 ? (
+        <View
+          style={[
+            styles.tabletBottomClearance,
+            { height: tabletBottomClearance },
+          ]}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -210,6 +224,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
+  },
+  tabletBottomClearance: {
+    backgroundColor: colors.surface,
   },
   navItem: {
     flex: 1,
