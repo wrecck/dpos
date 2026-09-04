@@ -17,6 +17,16 @@ type ProductRow = {
   price_cents: number;
   stock: number;
   low_stock_threshold: number;
+  image_uri: string | null;
+  category: string | null;
+  weight: string | null;
+  dimensions: string | null;
+  colors: string | null;
+  sizes: string | null;
+  brand: string | null;
+  supplier: string | null;
+  manufacturer: string | null;
+  variants: string | null;
 };
 
 type SaleRow = {
@@ -36,7 +46,23 @@ const mapProduct = (row: ProductRow): Product => ({
   priceCents: row.price_cents,
   stock: row.stock,
   lowStockThreshold: row.low_stock_threshold,
+  imageUri: row.image_uri,
+  category: row.category,
+  weight: row.weight,
+  dimensions: row.dimensions,
+  colors: row.colors,
+  sizes: row.sizes,
+  brand: row.brand,
+  supplier: row.supplier,
+  manufacturer: row.manufacturer,
+  variants: row.variants,
 });
+
+const PRODUCT_COLUMNS = `
+  id, sku, name, price_cents, stock, low_stock_threshold,
+  image_uri, category, weight, dimensions, colors, sizes,
+  brand, supplier, manufacturer, variants
+`;
 
 export async function migrateDatabase(db: SQLiteDatabase) {
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -85,6 +111,36 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       PRAGMA user_version = 1;
     `);
   }
+
+  if (version < 2) {
+    const existingColumns = await db.getAllAsync<{ name: string }>(
+      'PRAGMA table_info(products)',
+    );
+    const columnNames = new Set(existingColumns.map((column) => column.name));
+    const optionalColumns = [
+      'image_uri',
+      'category',
+      'weight',
+      'dimensions',
+      'colors',
+      'sizes',
+      'brand',
+      'supplier',
+      'manufacturer',
+      'variants',
+    ];
+
+    for (const column of optionalColumns) {
+      if (!columnNames.has(column)) {
+        await db.execAsync(`ALTER TABLE products ADD COLUMN ${column} TEXT`);
+      }
+    }
+
+    await db.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
+      PRAGMA user_version = 2;
+    `);
+  }
 }
 
 export async function getProducts(
@@ -94,15 +150,17 @@ export async function getProducts(
   const term = search.trim();
   const rows = term
     ? await db.getAllAsync<ProductRow>(
-        `SELECT id, sku, name, price_cents, stock, low_stock_threshold
+        `SELECT ${PRODUCT_COLUMNS}
          FROM products
-         WHERE name LIKE ? OR sku LIKE ?
+         WHERE name LIKE ? OR sku LIKE ? OR category LIKE ? OR brand LIKE ?
          ORDER BY name COLLATE NOCASE`,
+        `%${term}%`,
+        `%${term}%`,
         `%${term}%`,
         `%${term}%`,
       )
     : await db.getAllAsync<ProductRow>(
-        `SELECT id, sku, name, price_cents, stock, low_stock_threshold
+        `SELECT ${PRODUCT_COLUMNS}
          FROM products
          ORDER BY name COLLATE NOCASE`,
       );
@@ -121,13 +179,25 @@ export async function saveProduct(
     input.priceCents,
     input.stock,
     input.lowStockThreshold,
+    input.imageUri,
+    input.category,
+    input.weight,
+    input.dimensions,
+    input.colors,
+    input.sizes,
+    input.brand,
+    input.supplier,
+    input.manufacturer,
+    input.variants,
   ] as const;
 
   if (id) {
     await db.runAsync(
       `UPDATE products
        SET sku = ?, name = ?, price_cents = ?, stock = ?,
-           low_stock_threshold = ?, updated_at = CURRENT_TIMESTAMP
+           low_stock_threshold = ?, image_uri = ?, category = ?, weight = ?,
+           dimensions = ?, colors = ?, sizes = ?, brand = ?, supplier = ?,
+           manufacturer = ?, variants = ?, updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       ...values,
       id,
@@ -137,8 +207,10 @@ export async function saveProduct(
 
   await db.runAsync(
     `INSERT INTO products
-      (sku, name, price_cents, stock, low_stock_threshold)
-     VALUES (?, ?, ?, ?, ?)`,
+      (sku, name, price_cents, stock, low_stock_threshold, image_uri,
+       category, weight, dimensions, colors, sizes, brand, supplier,
+       manufacturer, variants)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ...values,
   );
 }
@@ -182,7 +254,7 @@ export async function completeSale(
 
     for (const item of cart) {
       const row = await transaction.getFirstAsync<ProductRow>(
-        `SELECT id, sku, name, price_cents, stock, low_stock_threshold
+        `SELECT ${PRODUCT_COLUMNS}
          FROM products WHERE id = ?`,
         item.id,
       );

@@ -5,6 +5,16 @@ export type Product = {
   priceCents: number;
   stock: number;
   lowStockThreshold: number;
+  imageUri: string | null;
+  category: string | null;
+  weight: string | null;
+  dimensions: string | null;
+  colors: string | null;
+  sizes: string | null;
+  brand: string | null;
+  supplier: string | null;
+  manufacturer: string | null;
+  variants: string | null;
 };
 
 export type ProductInput = Omit<Product, 'id'>;

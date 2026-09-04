@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -226,11 +227,23 @@ function ProductRow({
   return (
     <Pressable style={styles.product} onPress={onEdit}>
       <View style={styles.productTop}>
+        {product.imageUri ? (
+          <Image source={{ uri: product.imageUri }} style={styles.thumbnail} />
+        ) : (
+          <View style={styles.thumbnailPlaceholder}>
+            <Ionicons name="cube-outline" size={22} color={colors.primary} />
+          </View>
+        )}
         <View style={styles.productInfo}>
           <Text style={styles.productName} numberOfLines={1}>
             {product.name}
           </Text>
           <Text style={styles.sku}>{product.sku}</Text>
+          {product.category || product.brand ? (
+            <Text style={styles.productMeta} numberOfLines={1}>
+              {[product.category, product.brand].filter(Boolean).join(' · ')}
+            </Text>
+          ) : null}
         </View>
         <Text style={styles.price}>{formatMoney(product.priceCents)}</Text>
       </View>
@@ -351,8 +364,23 @@ const styles = StyleSheet.create({
   },
   productTop: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
+  },
+  thumbnail: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceMuted,
+  },
+  thumbnailPlaceholder: {
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceMuted,
   },
   productInfo: {
     flex: 1,
@@ -366,6 +394,11 @@ const styles = StyleSheet.create({
   sku: {
     color: colors.textMuted,
     fontSize: 13,
+  },
+  productMeta: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '600',
   },
   price: {
     color: colors.primary,

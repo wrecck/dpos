@@ -1,6 +1,9 @@
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import {
   Alert,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -12,6 +15,7 @@ import {
   View,
 } from 'react-native';
 
+import { persistProductImage } from '../productImages';
 import { colors, radius, spacing } from '../theme';
 import type { Product, ProductInput } from '../types';
 import { getErrorMessage, parseMoney } from '../utils';
@@ -29,6 +33,16 @@ type FormState = {
   price: string;
   stock: string;
   lowStockThreshold: string;
+  imageUri: string;
+  category: string;
+  weight: string;
+  dimensions: string;
+  colors: string;
+  sizes: string;
+  brand: string;
+  supplier: string;
+  manufacturer: string;
+  variants: string;
 };
 
 const emptyForm: FormState = {
@@ -37,6 +51,16 @@ const emptyForm: FormState = {
   price: '',
   stock: '0',
   lowStockThreshold: '5',
+  imageUri: '',
+  category: '',
+  weight: '',
+  dimensions: '',
+  colors: '',
+  sizes: '',
+  brand: '',
+  supplier: '',
+  manufacturer: '',
+  variants: '',
 };
 
 export function ProductFormModal({
@@ -60,6 +84,16 @@ export function ProductFormModal({
             price: (product.priceCents / 100).toFixed(2),
             stock: String(product.stock),
             lowStockThreshold: String(product.lowStockThreshold),
+            imageUri: product.imageUri ?? '',
+            category: product.category ?? '',
+            weight: product.weight ?? '',
+            dimensions: product.dimensions ?? '',
+            colors: product.colors ?? '',
+            sizes: product.sizes ?? '',
+            brand: product.brand ?? '',
+            supplier: product.supplier ?? '',
+            manufacturer: product.manufacturer ?? '',
+            variants: product.variants ?? '',
           }
         : emptyForm,
     );
@@ -67,6 +101,25 @@ export function ProductFormModal({
 
   const update = (key: keyof FormState, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const pickImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled) {
+        const asset = result.assets[0];
+        const imageUri = await persistProductImage(asset.uri, asset.fileName);
+        update('imageUri', imageUri);
+      }
+    } catch (error) {
+      Alert.alert('Could not select image', getErrorMessage(error));
+    }
   };
 
   const submit = async () => {
@@ -103,6 +156,16 @@ export function ProductFormModal({
           priceCents,
           stock,
           lowStockThreshold,
+          imageUri: optionalValue(form.imageUri),
+          category: optionalValue(form.category),
+          weight: optionalValue(form.weight),
+          dimensions: optionalValue(form.dimensions),
+          colors: optionalValue(form.colors),
+          sizes: optionalValue(form.sizes),
+          brand: optionalValue(form.brand),
+          supplier: optionalValue(form.supplier),
+          manufacturer: optionalValue(form.manufacturer),
+          variants: optionalValue(form.variants),
         },
         product?.id,
       );
@@ -136,6 +199,35 @@ export function ProductFormModal({
           contentContainerStyle={styles.form}
           keyboardShouldPersistTaps="handled"
         >
+          <Text style={styles.sectionTitle}>Product details</Text>
+          <View style={styles.imageRow}>
+            <Pressable style={styles.imagePicker} onPress={pickImage}>
+              {form.imageUri ? (
+                <Image source={{ uri: form.imageUri }} style={styles.image} />
+              ) : (
+                <>
+                  <Ionicons
+                    name="image-outline"
+                    size={32}
+                    color={colors.primary}
+                  />
+                  <Text style={styles.imagePlaceholderText}>Add image</Text>
+                </>
+              )}
+            </Pressable>
+            <View style={styles.imageActions}>
+              <Pressable style={styles.chooseImageButton} onPress={pickImage}>
+                <Text style={styles.chooseImageText}>
+                  {form.imageUri ? 'Change image' : 'Choose product image'}
+                </Text>
+              </Pressable>
+              {form.imageUri ? (
+                <Pressable onPress={() => update('imageUri', '')}>
+                  <Text style={styles.removeImageText}>Remove image</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
           <Field
             label="Product name"
             value={form.name}
@@ -172,10 +264,72 @@ export function ProductFormModal({
             keyboardType="number-pad"
             help="The product is flagged when stock reaches this number."
           />
+          <Text style={styles.sectionTitle}>Optional catalog information</Text>
+          <Field
+            label="Category"
+            value={form.category}
+            onChangeText={(value) => update('category', value)}
+            placeholder="e.g. Coffee, Clothing, Electronics"
+          />
+          <Field
+            label="Brand"
+            value={form.brand}
+            onChangeText={(value) => update('brand', value)}
+            placeholder="e.g. DPOS Roasters"
+          />
+          <Field
+            label="Weight"
+            value={form.weight}
+            onChangeText={(value) => update('weight', value)}
+            placeholder="e.g. 250 g or 1 kg"
+          />
+          <Field
+            label="Dimensions"
+            value={form.dimensions}
+            onChangeText={(value) => update('dimensions', value)}
+            placeholder="e.g. 20 × 10 × 5 cm"
+          />
+          <Field
+            label="Colours"
+            value={form.colors}
+            onChangeText={(value) => update('colors', value)}
+            placeholder="e.g. Black, White, Blue"
+            help="Separate multiple options with commas."
+          />
+          <Field
+            label="Sizes"
+            value={form.sizes}
+            onChangeText={(value) => update('sizes', value)}
+            placeholder="e.g. Small, Medium, Large"
+            help="Useful for drinks, clothing, and packaged goods."
+          />
+          <Field
+            label="Variants"
+            value={form.variants}
+            onChangeText={(value) => update('variants', value)}
+            placeholder="e.g. Decaf, Regular or 6-pack, 12-pack"
+            help="Separate multiple options with commas."
+          />
+          <Field
+            label="Supplier"
+            value={form.supplier}
+            onChangeText={(value) => update('supplier', value)}
+            placeholder="Supplier or distributor"
+          />
+          <Field
+            label="Manufacturer"
+            value={form.manufacturer}
+            onChangeText={(value) => update('manufacturer', value)}
+            placeholder="Manufacturer name"
+          />
         </ScrollView>
       </KeyboardAvoidingView>
     </Modal>
   );
+}
+
+function optionalValue(value: string) {
+  return value.trim() || null;
 }
 
 type FieldProps = React.ComponentProps<typeof TextInput> & {
@@ -233,6 +387,60 @@ const styles = StyleSheet.create({
   form: {
     padding: spacing.md,
     gap: spacing.lg,
+  },
+  sectionTitle: {
+    color: colors.primaryDark,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  imageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  imagePicker: {
+    width: 112,
+    height: 112,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.primary,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceMuted,
+  },
+  image: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  imagePlaceholderText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  imageActions: {
+    flex: 1,
+    alignItems: 'flex-start',
+    gap: spacing.md,
+  },
+  chooseImageButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+    borderRadius: radius.sm,
+    backgroundColor: colors.primary,
+  },
+  chooseImageText: {
+    color: colors.surface,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  removeImageText: {
+    color: colors.danger,
+    fontSize: 13,
+    fontWeight: '700',
   },
   field: {
     gap: spacing.sm,
