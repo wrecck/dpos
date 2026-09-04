@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -13,6 +14,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -33,6 +35,8 @@ export function RegisterScreen({
   onOpenInventory,
 }: Props) {
   const db = useSQLiteContext();
+  const { height, width } = useWindowDimensions();
+  const isTablet = Math.min(width, height) >= 600;
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState('');
@@ -41,12 +45,15 @@ export function RegisterScreen({
 
   const load = useCallback(async () => {
     try {
-      const currentProducts = await getProducts(db, search);
-      setProducts(currentProducts);
+      const allProducts = await getProducts(db);
+      const visibleProducts = search.trim()
+        ? await getProducts(db, search)
+        : allProducts;
+      setProducts(visibleProducts);
       setCart((currentCart) =>
         currentCart
           .map((item) => {
-            const current = currentProducts.find(
+            const current = allProducts.find(
               (product) => product.id === item.id,
             );
             return current
@@ -137,70 +144,91 @@ export function RegisterScreen({
 
   return (
     <View style={styles.container}>
-      <View style={styles.searchBox}>
-        <Ionicons name="search-outline" size={20} color={colors.textMuted} />
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          style={styles.searchInput}
-          placeholder="Search products or SKU"
-          placeholderTextColor={colors.textMuted}
-          autoCapitalize="none"
-          returnKeyType="search"
-        />
-        {search ? (
-          <Pressable onPress={() => setSearch('')} hitSlop={10}>
-            <Ionicons name="close-circle" size={20} color={colors.textMuted} />
-          </Pressable>
+      <View style={[styles.registerBody, isTablet && styles.registerBodyTablet]}>
+        <View style={styles.productPane}>
+          <View style={styles.searchBox}>
+            <Ionicons name="search-outline" size={20} color={colors.textMuted} />
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              style={styles.searchInput}
+              placeholder="Search products, SKU, category, or brand"
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="none"
+              returnKeyType="search"
+            />
+            {search ? (
+              <Pressable onPress={() => setSearch('')} hitSlop={10}>
+                <Ionicons name="close-circle" size={20} color={colors.textMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+
+          {loading ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          ) : (
+            <FlatList
+              data={products}
+              keyExtractor={(item) => String(item.id)}
+              numColumns={2}
+              columnWrapperStyle={styles.productRow}
+              contentContainerStyle={[
+                styles.productList,
+                products.length === 0 && styles.emptyList,
+                !isTablet && cart.length > 0 && styles.productListWithCart,
+              ]}
+              renderItem={({ item }) => (
+                <ProductTile product={item} onPress={() => addToCart(item)} />
+              )}
+              ListEmptyComponent={
+                <View style={styles.empty}>
+                  <View style={styles.emptyIcon}>
+                    <Ionicons
+                      name={search ? 'search-outline' : 'storefront-outline'}
+                      size={34}
+                      color={colors.primary}
+                    />
+                  </View>
+                  <Text style={styles.emptyTitle}>
+                    {search
+                      ? 'No matching products'
+                      : 'Ready for your first product'}
+                  </Text>
+                  <Text style={styles.emptyText}>
+                    {search
+                      ? 'Try another name, SKU, category, or brand.'
+                      : 'Products you add to inventory will appear here.'}
+                  </Text>
+                  {!search ? (
+                    <Pressable
+                      style={styles.inventoryButton}
+                      onPress={onOpenInventory}
+                    >
+                      <Text style={styles.inventoryButtonText}>
+                        Open inventory
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              }
+            />
+          )}
+        </View>
+
+        {isTablet ? (
+          <TabletCartPanel
+            cart={cart}
+            itemCount={itemCount}
+            totalCents={totalCents}
+            onSetQuantity={setQuantity}
+            onCheckout={() => setCheckoutVisible(true)}
+          />
         ) : null}
       </View>
 
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={colors.primary} />
-        </View>
-      ) : (
-        <FlatList
-          data={products}
-          keyExtractor={(item) => String(item.id)}
-          numColumns={2}
-          columnWrapperStyle={styles.productRow}
-          contentContainerStyle={[
-            styles.productList,
-            products.length === 0 && styles.emptyList,
-            cart.length > 0 && styles.productListWithCart,
-          ]}
-          renderItem={({ item }) => (
-            <ProductTile product={item} onPress={() => addToCart(item)} />
-          )}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <View style={styles.emptyIcon}>
-                <Ionicons
-                  name={search ? 'search-outline' : 'storefront-outline'}
-                  size={34}
-                  color={colors.primary}
-                />
-              </View>
-              <Text style={styles.emptyTitle}>
-                {search ? 'No matching products' : 'Ready for your first product'}
-              </Text>
-              <Text style={styles.emptyText}>
-                {search
-                  ? 'Try another name or SKU.'
-                  : 'Products you add to inventory will appear here.'}
-              </Text>
-              {!search ? (
-                <Pressable style={styles.inventoryButton} onPress={onOpenInventory}>
-                  <Text style={styles.inventoryButtonText}>Open inventory</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          }
-        />
-      )}
-
-      {cart.length > 0 ? (
+      {!isTablet && cart.length > 0 ? (
         <Pressable
           style={styles.cartBar}
           onPress={() => setCheckoutVisible(true)}
@@ -230,6 +258,118 @@ export function RegisterScreen({
   );
 }
 
+function TabletCartPanel({
+  cart,
+  itemCount,
+  totalCents,
+  onSetQuantity,
+  onCheckout,
+}: {
+  cart: CartItem[];
+  itemCount: number;
+  totalCents: number;
+  onSetQuantity: (productId: number, quantity: number) => void;
+  onCheckout: () => void;
+}) {
+  return (
+    <View style={styles.tabletCart}>
+      <View style={styles.tabletCartHeader}>
+        <View>
+          <Text style={styles.tabletCartTitle}>Current sale</Text>
+          <Text style={styles.tabletCartSubtitle}>
+            {itemCount} item{itemCount === 1 ? '' : 's'}
+          </Text>
+        </View>
+        <View style={styles.tabletCartCount}>
+          <Text style={styles.tabletCartCountText}>{itemCount}</Text>
+        </View>
+      </View>
+
+      <ScrollView
+        style={styles.tabletCartScroll}
+        contentContainerStyle={[
+          styles.tabletCartItems,
+          cart.length === 0 && styles.tabletCartEmptyContainer,
+        ]}
+      >
+        {cart.length === 0 ? (
+          <View style={styles.tabletCartEmpty}>
+            <Ionicons name="cart-outline" size={38} color={colors.textMuted} />
+            <Text style={styles.tabletCartEmptyTitle}>Cart is empty</Text>
+            <Text style={styles.tabletCartEmptyText}>
+              Tap products on the left to add multiple items.
+            </Text>
+          </View>
+        ) : (
+          cart.map((item) => (
+            <View key={item.id} style={styles.tabletCartItem}>
+              <View style={styles.tabletLineTop}>
+                <View style={styles.lineInfo}>
+                  <Text style={styles.lineName} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={styles.linePrice}>
+                    {formatMoney(item.priceCents)} each
+                  </Text>
+                </View>
+                <Text style={styles.lineTotal}>
+                  {formatMoney(item.priceCents * item.quantity)}
+                </Text>
+              </View>
+              <View style={styles.tabletQuantityRow}>
+                <Pressable
+                  style={styles.quantityButton}
+                  onPress={() => onSetQuantity(item.id, item.quantity - 1)}
+                >
+                  <Ionicons name="remove" size={18} color={colors.text} />
+                </Pressable>
+                <Text style={styles.quantityText}>{item.quantity}</Text>
+                <Pressable
+                  style={styles.quantityButton}
+                  onPress={() =>
+                    onSetQuantity(
+                      item.id,
+                      Math.min(item.quantity + 1, item.stock),
+                    )
+                  }
+                >
+                  <Ionicons name="add" size={18} color={colors.text} />
+                </Pressable>
+                <Pressable
+                  style={styles.removeLineButton}
+                  onPress={() => onSetQuantity(item.id, 0)}
+                >
+                  <Ionicons name="trash-outline" size={17} color={colors.danger} />
+                </Pressable>
+              </View>
+            </View>
+          ))
+        )}
+      </ScrollView>
+
+      <View style={styles.tabletCartFooter}>
+        <View style={styles.tabletTotalRow}>
+          <Text style={styles.tabletTotalLabel}>Total</Text>
+          <Text style={styles.tabletTotalValue}>{formatMoney(totalCents)}</Text>
+        </View>
+        <Pressable
+          style={[
+            styles.tabletCheckoutButton,
+            cart.length === 0 && styles.disabledButton,
+          ]}
+          onPress={onCheckout}
+          disabled={cart.length === 0}
+        >
+          <Text style={styles.tabletCheckoutText}>
+            Continue to payment
+          </Text>
+          <Ionicons name="arrow-forward" size={20} color={colors.surface} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 function ProductTile({
   product,
   onPress,
@@ -251,18 +391,26 @@ function ProductTile({
       accessibilityRole="button"
       accessibilityLabel={`Add ${product.name} to cart`}
     >
-      <View style={styles.productGlyph}>
-        <Ionicons
-          name="cube-outline"
-          size={25}
-          color={soldOut ? colors.textMuted : colors.primary}
+      {product.imageUri ? (
+        <Image
+          source={{ uri: product.imageUri }}
+          style={styles.productImage}
+          resizeMode="cover"
         />
-      </View>
+      ) : (
+        <View style={styles.productGlyph}>
+          <Ionicons
+            name="cube-outline"
+            size={25}
+            color={soldOut ? colors.textMuted : colors.primary}
+          />
+        </View>
+      )}
       <Text style={styles.productName} numberOfLines={2}>
         {product.name}
       </Text>
       <Text style={styles.productSku} numberOfLines={1}>
-        {product.sku}
+        {[product.sku, product.category].filter(Boolean).join(' · ')}
       </Text>
       <View style={styles.tileBottom}>
         <Text style={styles.productPrice}>{formatMoney(product.priceCents)}</Text>
@@ -478,6 +626,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  registerBody: {
+    flex: 1,
+  },
+  registerBodyTablet: {
+    flexDirection: 'row',
+  },
+  productPane: {
+    flex: 1,
+    minWidth: 0,
+  },
   searchBox: {
     minHeight: 48,
     margin: spacing.md,
@@ -539,6 +697,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.surfaceMuted,
     marginBottom: spacing.sm,
+  },
+  productImage: {
+    width: '100%',
+    height: 78,
+    marginBottom: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceMuted,
   },
   productName: {
     minHeight: 40,
@@ -664,6 +829,138 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontSize: 16,
     fontWeight: '900',
+  },
+  tabletCart: {
+    width: '40%',
+    minWidth: 280,
+    borderLeftWidth: 1,
+    borderLeftColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  tabletCartHeader: {
+    minHeight: 72,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  tabletCartTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  tabletCartSubtitle: {
+    marginTop: 2,
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  tabletCartCount: {
+    minWidth: 34,
+    height: 34,
+    paddingHorizontal: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+    backgroundColor: colors.accent,
+  },
+  tabletCartCountText: {
+    color: colors.primaryDark,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  tabletCartScroll: {
+    flex: 1,
+  },
+  tabletCartItems: {
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  tabletCartEmptyContainer: {
+    flexGrow: 1,
+  },
+  tabletCartEmpty: {
+    flex: 1,
+    minHeight: 220,
+    padding: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabletCartEmptyTitle: {
+    marginTop: spacing.sm,
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  tabletCartEmptyText: {
+    marginTop: spacing.xs,
+    color: colors.textMuted,
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  tabletCartItem: {
+    padding: spacing.md,
+    gap: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.background,
+  },
+  tabletLineTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  tabletQuantityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  removeLineButton: {
+    width: 32,
+    height: 32,
+    marginLeft: 'auto',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabletCartFooter: {
+    padding: spacing.md,
+    gap: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  tabletTotalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  tabletTotalLabel: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  tabletTotalValue: {
+    color: colors.primaryDark,
+    fontSize: 24,
+    fontWeight: '900',
+  },
+  tabletCheckoutButton: {
+    minHeight: 52,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+  },
+  tabletCheckoutText: {
+    color: colors.surface,
+    fontSize: 15,
+    fontWeight: '800',
   },
   checkoutContainer: {
     flex: 1,

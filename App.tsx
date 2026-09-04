@@ -73,7 +73,7 @@ function AppShell() {
   const { height, width } = useWindowDimensions();
   const tabletBottomClearance =
     Platform.OS === 'android' && Math.min(width, height) >= 600
-      ? Math.round(height * 0.15)
+      ? Math.round(height * 0.05)
       : 0;
 
   const dataChanged = () => setRevision((current) => current + 1);
