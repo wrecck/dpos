@@ -588,6 +588,7 @@ function sqlValue(value: string | number | boolean | null): string {
 async function importProductsSetBased(
   db: SQLiteDatabase,
   preview: ProductImportPreview,
+  manageTransaction = false,
 ): Promise<ProductImportResult> {
   const values = preview.rows
     .map((row) =>
@@ -631,7 +632,7 @@ async function importProductsSetBased(
     .map((row) => `(${row})`)
     .join(',\n');
 
-  await db.execAsync(`
+  const importSql = `
     DROP TABLE IF EXISTS temp.dpos_import_rows;
     CREATE TEMP TABLE dpos_import_rows (
       row_number INTEGER,
@@ -853,7 +854,19 @@ async function importProductsSetBased(
     JOIN product_variants v ON v.sku = r.sku COLLATE NOCASE
     JOIN locations l ON l.name = r.location_name COLLATE NOCASE
     WHERE r.is_new = 1 AND r.opening_stock > 0;
-  `);
+  `;
+  try {
+    await db.execAsync(
+      manageTransaction
+        ? `BEGIN IMMEDIATE;\n${importSql}\nCOMMIT;`
+        : importSql,
+    );
+  } catch (error) {
+    if (manageTransaction) {
+      await db.execAsync('ROLLBACK;').catch(() => undefined);
+    }
+    throw error;
+  }
 
   const created = await db.getFirstAsync<{
     count: number;
@@ -883,6 +896,28 @@ export async function importProductsCsv(
       `Import has ${errors.length} error${errors.length === 1 ? '' : 's'}; first: row ${errors[0].row} ${errors[0].message}`,
     );
   }
+  if (Platform.OS === 'web') {
+    const incomingByBarcode = new Map(
+      preview.rows
+        .filter((row) => row.barcode)
+        .map((row) => [row.barcode.toLowerCase(), row.sku.toLowerCase()]),
+    );
+    if (incomingByBarcode.size > 0) {
+      const barcodes = [...incomingByBarcode.keys()];
+      const existing = await db.getAllAsync<{ sku: string; barcode: string }>(
+        `SELECT sku, barcode FROM product_variants
+         WHERE barcode IN (${barcodes.map(() => '?').join(',')})`,
+        ...barcodes,
+      );
+      const conflict = existing.find(
+        (row) => incomingByBarcode.get(row.barcode.toLowerCase()) !== row.sku.toLowerCase(),
+      );
+      if (conflict) {
+        throw new Error(`Barcode ${conflict.barcode} belongs to another SKU.`);
+      }
+    }
+    return importProductsSetBased(db, preview, true);
+  }
   return inTransaction(db, async (transaction) => {
     await transaction.execAsync(`
       CREATE TEMP TABLE IF NOT EXISTS dpos_import_keys (
@@ -910,11 +945,6 @@ export async function importProductsCsv(
     if (conflict) {
       throw new Error(`Barcode ${conflict.barcode} belongs to another SKU.`);
     }
-    if (Platform.OS === 'web') {
-      await transaction.execAsync('DROP TABLE IF EXISTS temp.dpos_import_keys');
-      return importProductsSetBased(transaction, preview);
-    }
-
     const categories = new Map<string, number>();
     const suppliers = new Map<string, number>();
     const locations = new Map<string, number>();
