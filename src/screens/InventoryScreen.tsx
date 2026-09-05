@@ -15,6 +15,8 @@ import {
 import { useSQLiteContext } from 'expo-sqlite';
 
 import { ProductFormModal } from '../components/ProductFormModal';
+import { ProductImportModal } from '../components/ProductImportModal';
+import { StockReceiptModal } from '../components/StockReceiptModal';
 import {
   deleteProduct,
   getProducts,
@@ -37,6 +39,8 @@ export function InventoryScreen({ revision, onDataChanged }: Props) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+  const [importVisible, setImportVisible] = useState(false);
+  const [receiptVisible, setReceiptVisible] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product>();
 
   const load = useCallback(async () => {
@@ -132,6 +136,22 @@ export function InventoryScreen({ revision, onDataChanged }: Props) {
             </Pressable>
           ) : null}
         </View>
+        <Pressable
+          style={styles.secondaryButton}
+          onPress={() => setImportVisible(true)}
+          accessibilityLabel="Import product CSV"
+        >
+          <Ionicons name="document-text-outline" size={21} color={colors.primary} />
+          <Text style={styles.secondaryButtonText}>Import</Text>
+        </Pressable>
+        <Pressable
+          style={styles.secondaryButton}
+          onPress={() => setReceiptVisible(true)}
+          accessibilityLabel="Receive supplier delivery"
+        >
+          <Ionicons name="archive-outline" size={21} color={colors.primary} />
+          <Text style={styles.secondaryButtonText}>Receive</Text>
+        </Pressable>
         <Pressable style={styles.addButton} onPress={openNew}>
           <Ionicons name="add" size={22} color={colors.surface} />
           <Text style={styles.addButtonText}>Add</Text>
@@ -203,6 +223,22 @@ export function InventoryScreen({ revision, onDataChanged }: Props) {
         onClose={() => setModalVisible(false)}
         onSave={handleSave}
       />
+      <ProductImportModal
+        visible={importVisible}
+        onClose={() => setImportVisible(false)}
+        onImported={() => {
+          onDataChanged();
+          load();
+        }}
+      />
+      <StockReceiptModal
+        visible={receiptVisible}
+        onClose={() => setReceiptVisible(false)}
+        onReceived={() => {
+          onDataChanged();
+          load();
+        }}
+      />
     </View>
   );
 }
@@ -239,6 +275,9 @@ function ProductRow({
             {product.name}
           </Text>
           <Text style={styles.sku}>{product.sku}</Text>
+          {product.variantName ? (
+            <Text style={styles.variantName}>{product.variantName}</Text>
+          ) : null}
           {product.category || product.brand ? (
             <Text style={styles.productMeta} numberOfLines={1}>
               {[product.category, product.brand].filter(Boolean).join(' · ')}
@@ -334,6 +373,23 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderRadius: radius.md,
   },
+  secondaryButton: {
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
+  secondaryButtonText: {
+    color: colors.primary,
+    fontWeight: '700',
+    fontSize: 14,
+  },
   addButtonText: {
     color: colors.surface,
     fontWeight: '700',
@@ -394,6 +450,11 @@ const styles = StyleSheet.create({
   sku: {
     color: colors.textMuted,
     fontSize: 13,
+  },
+  variantName: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '700',
   },
   productMeta: {
     color: colors.primary,

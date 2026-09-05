@@ -29,38 +29,68 @@ type Props = {
 
 type FormState = {
   name: string;
+  parentSku: string;
   sku: string;
+  barcode: string;
+  variantName: string;
   price: string;
+  wholesalePrice: string;
+  cost: string;
+  taxRate: string;
   stock: string;
   lowStockThreshold: string;
+  targetStock: string;
   imageUri: string;
   category: string;
+  subcategory: string;
+  description: string;
   weight: string;
   dimensions: string;
   colors: string;
   sizes: string;
   brand: string;
   supplier: string;
+  supplierCode: string;
+  unit: string;
   manufacturer: string;
   variants: string;
+  batchTracking: boolean;
+  expiryTracking: boolean;
+  active: boolean;
+  notes: string;
 };
 
 const emptyForm: FormState = {
   name: '',
+  parentSku: '',
   sku: '',
+  barcode: '',
+  variantName: '',
   price: '',
+  wholesalePrice: '',
+  cost: '',
+  taxRate: '10',
   stock: '0',
   lowStockThreshold: '5',
+  targetStock: '0',
   imageUri: '',
   category: '',
+  subcategory: '',
+  description: '',
   weight: '',
   dimensions: '',
   colors: '',
   sizes: '',
   brand: '',
   supplier: '',
+  supplierCode: '',
+  unit: 'Each',
   manufacturer: '',
   variants: '',
+  batchTracking: false,
+  expiryTracking: false,
+  active: true,
+  notes: '',
 };
 
 export function ProductFormModal({
@@ -80,20 +110,38 @@ export function ProductFormModal({
       product
         ? {
             name: product.name,
+            parentSku: product.parentSku,
             sku: product.sku,
+            barcode: product.barcode ?? '',
+            variantName: product.variantName ?? '',
             price: (product.priceCents / 100).toFixed(2),
+            wholesalePrice:
+              product.wholesalePriceIncTaxCents === null
+                ? ''
+                : (product.wholesalePriceIncTaxCents / 100).toFixed(2),
+            cost: (product.costExTaxCents / 100).toFixed(2),
+            taxRate: (product.taxRateBasisPoints / 100).toString(),
             stock: String(product.stock),
             lowStockThreshold: String(product.lowStockThreshold),
+            targetStock: String(product.targetStock),
             imageUri: product.imageUri ?? '',
             category: product.category ?? '',
+            subcategory: product.subcategory ?? '',
+            description: product.description ?? '',
             weight: product.weight ?? '',
             dimensions: product.dimensions ?? '',
             colors: product.colors ?? '',
             sizes: product.sizes ?? '',
             brand: product.brand ?? '',
             supplier: product.supplier ?? '',
+            supplierCode: product.supplierCode ?? '',
+            unit: product.unit,
             manufacturer: product.manufacturer ?? '',
             variants: product.variants ?? '',
+            batchTracking: product.batchTracking,
+            expiryTracking: product.expiryTracking,
+            active: product.active,
+            notes: product.notes ?? '',
           }
         : emptyForm,
     );
@@ -124,8 +172,14 @@ export function ProductFormModal({
 
   const submit = async () => {
     const priceCents = parseMoney(form.price);
+    const wholesalePriceCents = form.wholesalePrice.trim()
+      ? parseMoney(form.wholesalePrice)
+      : null;
+    const costExTaxCents = parseMoney(form.cost || '0');
+    const taxRate = Number(form.taxRate);
     const stock = Number(form.stock);
     const lowStockThreshold = Number(form.lowStockThreshold);
+    const targetStock = Number(form.targetStock);
 
     if (!form.name.trim() || !form.sku.trim()) {
       Alert.alert('Missing information', 'Name and SKU are required.');
@@ -135,14 +189,32 @@ export function ProductFormModal({
       Alert.alert('Invalid price', 'Enter a valid price of zero or more.');
       return;
     }
-    if (!Number.isInteger(stock) || stock < 0) {
-      Alert.alert('Invalid stock', 'Stock must be a whole number of zero or more.');
+    if (
+      !Number.isInteger(costExTaxCents) ||
+      costExTaxCents < 0 ||
+      (wholesalePriceCents !== null &&
+        (!Number.isInteger(wholesalePriceCents) || wholesalePriceCents < 0))
+    ) {
+      Alert.alert('Invalid cost or price', 'Enter non-negative currency amounts.');
       return;
     }
-    if (!Number.isInteger(lowStockThreshold) || lowStockThreshold < 0) {
+    if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
+      Alert.alert('Invalid tax rate', 'Tax rate must be between 0 and 100%.');
+      return;
+    }
+    if (!Number.isFinite(stock) || stock < 0) {
+      Alert.alert('Invalid stock', 'Stock must be a number of zero or more.');
+      return;
+    }
+    if (
+      !Number.isInteger(lowStockThreshold) ||
+      lowStockThreshold < 0 ||
+      !Number.isInteger(targetStock) ||
+      targetStock < 0
+    ) {
       Alert.alert(
-        'Invalid threshold',
-        'Low-stock threshold must be a whole number of zero or more.',
+        'Invalid stock target',
+        'Reorder and target stock must be whole numbers of zero or more.',
       );
       return;
     }
@@ -152,20 +224,37 @@ export function ProductFormModal({
       await onSave(
         {
           name: form.name.trim(),
+          parentSku: form.parentSku.trim() || form.sku.trim(),
           sku: form.sku.trim(),
+          barcode: optionalValue(form.barcode),
+          variantName: optionalValue(form.variantName),
           priceCents,
+          retailPriceIncTaxCents: priceCents,
+          wholesalePriceIncTaxCents: wholesalePriceCents,
+          costExTaxCents,
+          taxRateBasisPoints: Math.round(taxRate * 100),
           stock,
           lowStockThreshold,
+          reorderPoint: lowStockThreshold,
+          targetStock,
           imageUri: optionalValue(form.imageUri),
           category: optionalValue(form.category),
+          subcategory: optionalValue(form.subcategory),
+          description: optionalValue(form.description),
           weight: optionalValue(form.weight),
           dimensions: optionalValue(form.dimensions),
           colors: optionalValue(form.colors),
           sizes: optionalValue(form.sizes),
           brand: optionalValue(form.brand),
           supplier: optionalValue(form.supplier),
+          supplierCode: optionalValue(form.supplierCode),
+          unit: form.unit.trim() || 'Each',
           manufacturer: optionalValue(form.manufacturer),
           variants: optionalValue(form.variants),
+          batchTracking: form.batchTracking,
+          expiryTracking: form.expiryTracking,
+          active: form.active,
+          notes: optionalValue(form.notes),
         },
         product?.id,
       );
@@ -236,6 +325,14 @@ export function ProductFormModal({
             autoFocus={!product}
           />
           <Field
+            label="Parent SKU"
+            value={form.parentSku}
+            onChangeText={(value) => update('parentSku', value)}
+            placeholder="Defaults to the SKU"
+            autoCapitalize="characters"
+            help="Use the same Parent SKU to group multiple sellable variants."
+          />
+          <Field
             label="SKU"
             value={form.sku}
             onChangeText={(value) => update('sku', value)}
@@ -243,26 +340,89 @@ export function ProductFormModal({
             autoCapitalize="characters"
           />
           <Field
-            label="Selling price"
+            label="Barcode"
+            value={form.barcode}
+            onChangeText={(value) => update('barcode', value)}
+            placeholder="Optional unique barcode"
+            keyboardType="number-pad"
+          />
+          <Field
+            label="Variant name"
+            value={form.variantName}
+            onChangeText={(value) => update('variantName', value)}
+            placeholder="e.g. 250 mL, Red / Large"
+          />
+          <Text style={styles.sectionTitle}>Pricing and tax</Text>
+          <Field
+            label="Cost ex tax"
+            value={form.cost}
+            onChangeText={(value) => update('cost', value)}
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+          />
+          <Field
+            label="Retail price inc tax"
             value={form.price}
             onChangeText={(value) => update('price', value)}
             placeholder="0.00"
             keyboardType="decimal-pad"
           />
           <Field
+            label="Wholesale price inc tax"
+            value={form.wholesalePrice}
+            onChangeText={(value) => update('wholesalePrice', value)}
+            placeholder="Optional"
+            keyboardType="decimal-pad"
+          />
+          <Field
+            label="Tax rate (%)"
+            value={form.taxRate}
+            onChangeText={(value) => update('taxRate', value)}
+            placeholder="10"
+            keyboardType="decimal-pad"
+          />
+          <Text style={styles.sectionTitle}>Inventory</Text>
+          <Field
             label="Stock on hand"
             value={form.stock}
             onChangeText={(value) => update('stock', value)}
             placeholder="0"
-            keyboardType="number-pad"
+            keyboardType="decimal-pad"
           />
           <Field
-            label="Low-stock warning at"
+            label="Reorder point"
             value={form.lowStockThreshold}
             onChangeText={(value) => update('lowStockThreshold', value)}
             placeholder="5"
             keyboardType="number-pad"
             help="The product is flagged when stock reaches this number."
+          />
+          <Field
+            label="Target stock"
+            value={form.targetStock}
+            onChangeText={(value) => update('targetStock', value)}
+            placeholder="0"
+            keyboardType="number-pad"
+          />
+          <Field
+            label="Unit"
+            value={form.unit}
+            onChangeText={(value) => update('unit', value)}
+            placeholder="Each, kg, mL, pack"
+          />
+          <ToggleField
+            label="Batch tracking"
+            value={form.batchTracking}
+            onChange={(value) =>
+              setForm((current) => ({ ...current, batchTracking: value }))
+            }
+          />
+          <ToggleField
+            label="Expiry tracking"
+            value={form.expiryTracking}
+            onChange={(value) =>
+              setForm((current) => ({ ...current, expiryTracking: value }))
+            }
           />
           <Text style={styles.sectionTitle}>Optional catalog information</Text>
           <Field
@@ -270,6 +430,19 @@ export function ProductFormModal({
             value={form.category}
             onChangeText={(value) => update('category', value)}
             placeholder="e.g. Coffee, Clothing, Electronics"
+          />
+          <Field
+            label="Subcategory"
+            value={form.subcategory}
+            onChangeText={(value) => update('subcategory', value)}
+            placeholder="e.g. Shampoo, Espresso, T-shirts"
+          />
+          <Field
+            label="Description"
+            value={form.description}
+            onChangeText={(value) => update('description', value)}
+            placeholder="Product description"
+            multiline
           />
           <Field
             label="Brand"
@@ -317,10 +490,30 @@ export function ProductFormModal({
             placeholder="Supplier or distributor"
           />
           <Field
+            label="Supplier code"
+            value={form.supplierCode}
+            onChangeText={(value) => update('supplierCode', value)}
+            placeholder="Supplier's code for this variant"
+          />
+          <Field
             label="Manufacturer"
             value={form.manufacturer}
             onChangeText={(value) => update('manufacturer', value)}
             placeholder="Manufacturer name"
+          />
+          <Field
+            label="Notes"
+            value={form.notes}
+            onChangeText={(value) => update('notes', value)}
+            placeholder="Internal notes"
+            multiline
+          />
+          <ToggleField
+            label="Active for sale"
+            value={form.active}
+            onChange={(value) =>
+              setForm((current) => ({ ...current, active: value }))
+            }
           />
         </ScrollView>
       </KeyboardAvoidingView>
@@ -347,6 +540,43 @@ function Field({ label, help, ...inputProps }: FieldProps) {
         placeholderTextColor={colors.textMuted}
       />
       {help ? <Text style={styles.help}>{help}</Text> : null}
+    </View>
+  );
+}
+
+function ToggleField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <View style={styles.toggleField}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={styles.toggleOptions}>
+        {[true, false].map((option) => (
+          <Pressable
+            key={String(option)}
+            style={[
+              styles.toggleOption,
+              value === option && styles.toggleOptionSelected,
+            ]}
+            onPress={() => onChange(option)}
+          >
+            <Text
+              style={[
+                styles.toggleText,
+                value === option && styles.toggleTextSelected,
+              ]}
+            >
+              {option ? 'Yes' : 'No'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
     </View>
   );
 }
@@ -464,5 +694,35 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 13,
     lineHeight: 18,
+  },
+  toggleField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  toggleOptions: {
+    flexDirection: 'row',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+  },
+  toggleOption: {
+    minWidth: 58,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+  },
+  toggleOptionSelected: {
+    backgroundColor: colors.primary,
+  },
+  toggleText: {
+    color: colors.textMuted,
+    fontWeight: '700',
+  },
+  toggleTextSelected: {
+    color: colors.surface,
   },
 });

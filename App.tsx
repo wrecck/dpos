@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { SQLiteProvider } from 'expo-sqlite';
+import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { StatusBar } from 'expo-status-bar';
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -16,11 +16,13 @@ import {
   SafeAreaView,
 } from 'react-native-safe-area-context';
 
-import { migrateDatabase } from './src/database';
+import { getStoreSettings, migrateDatabase } from './src/database';
+import { StoreSettingsModal } from './src/components/StoreSettingsModal';
 import { InventoryScreen } from './src/screens/InventoryScreen';
 import { RegisterScreen } from './src/screens/RegisterScreen';
 import { SalesScreen } from './src/screens/SalesScreen';
 import { colors, spacing } from './src/theme';
+import { setCurrencyCode } from './src/utils';
 
 type Tab = 'register' | 'inventory' | 'activity';
 
@@ -68,8 +70,10 @@ export default function App() {
 }
 
 function AppShell() {
+  const db = useSQLiteContext();
   const [activeTab, setActiveTab] = useState<Tab>('register');
   const [revision, setRevision] = useState(0);
+  const [settingsVisible, setSettingsVisible] = useState(false);
   const { height, width } = useWindowDimensions();
   const tabletBottomClearance =
     Platform.OS === 'android' && Math.min(width, height) >= 600
@@ -77,6 +81,11 @@ function AppShell() {
       : 0;
 
   const dataChanged = () => setRevision((current) => current + 1);
+  useEffect(() => {
+    getStoreSettings(db)
+      .then((settings) => setCurrencyCode(settings.currencyCode))
+      .catch(() => undefined);
+  }, [db, revision]);
   const title =
     activeTab === 'register'
       ? 'New sale'
@@ -94,9 +103,18 @@ function AppShell() {
           <Text style={styles.brand}>DPOS</Text>
           <Text style={styles.title}>{title}</Text>
         </View>
-        <View style={styles.offlineBadge}>
-          <View style={styles.offlineDot} />
-          <Text style={styles.offlineText}>Offline ready</Text>
+        <View style={styles.headerActions}>
+          <View style={styles.offlineBadge}>
+            <View style={styles.offlineDot} />
+            <Text style={styles.offlineText}>Offline ready</Text>
+          </View>
+          <Pressable
+            style={styles.settingsButton}
+            onPress={() => setSettingsVisible(true)}
+            accessibilityLabel="Store settings"
+          >
+            <Ionicons name="settings-outline" size={21} color={colors.surface} />
+          </Pressable>
         </View>
       </View>
 
@@ -150,6 +168,11 @@ function AppShell() {
           ]}
         />
       ) : null}
+      <StoreSettingsModal
+        visible={settingsVisible}
+        onClose={() => setSettingsVisible(false)}
+        onSaved={dataChanged}
+      />
     </SafeAreaView>
   );
 }
@@ -200,6 +223,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     borderRadius: 99,
+    backgroundColor: '#174F3C',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  settingsButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
     backgroundColor: '#174F3C',
   },
   offlineDot: {

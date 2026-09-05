@@ -29,6 +29,15 @@ type Props = {
   onOpenInventory: () => void;
 };
 
+type ProductGroup = {
+  parentId: number;
+  parentSku: string;
+  name: string;
+  brand: string | null;
+  category: string | null;
+  variants: Product[];
+};
+
 export function RegisterScreen({
   revision,
   onDataChanged,
@@ -42,25 +51,19 @@ export function RegisterScreen({
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [checkoutVisible, setCheckoutVisible] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<ProductGroup>();
 
   const load = useCallback(async () => {
     try {
-      const allProducts = await getProducts(db);
-      const visibleProducts = search.trim()
-        ? await getProducts(db, search)
-        : allProducts;
+      const visibleProducts = await getProducts(db, search, { limit: 300 });
       setProducts(visibleProducts);
       setCart((currentCart) =>
-        currentCart
-          .map((item) => {
-            const current = allProducts.find(
-              (product) => product.id === item.id,
-            );
-            return current
-              ? { ...current, quantity: Math.min(item.quantity, current.stock) }
-              : undefined;
-          })
-          .filter((item): item is CartItem => Boolean(item && item.quantity > 0)),
+        currentCart.map((item) => {
+          const current = visibleProducts.find((product) => product.id === item.id);
+          return current
+            ? { ...current, quantity: Math.min(item.quantity, current.stock) }
+            : item;
+        }).filter((item) => item.quantity > 0),
       );
     } catch (error) {
       Alert.alert('Could not load products', getErrorMessage(error));
@@ -68,6 +71,26 @@ export function RegisterScreen({
       setLoading(false);
     }
   }, [db, search]);
+
+  const productGroups = useMemo(() => {
+    const groups = new Map<number, ProductGroup>();
+    for (const product of products) {
+      const group = groups.get(product.parentId);
+      if (group) {
+        group.variants.push(product);
+      } else {
+        groups.set(product.parentId, {
+          parentId: product.parentId,
+          parentSku: product.parentSku,
+          name: product.name,
+          brand: product.brand,
+          category: product.category,
+          variants: [product],
+        });
+      }
+    }
+    return [...groups.values()];
+  }, [products]);
 
   useEffect(() => {
     const timeout = setTimeout(load, 150);
@@ -107,6 +130,28 @@ export function RegisterScreen({
             item.id === productId ? { ...item, quantity } : item,
           ),
     );
+  };
+
+  const selectGroup = (group: ProductGroup) => {
+    if (group.variants.length === 1) {
+      addToCart(group.variants[0]);
+    } else {
+      setSelectedGroup(group);
+    }
+  };
+
+  const submitSearch = () => {
+    const normalized = search.trim().toLowerCase();
+    if (!normalized) return;
+    const exact = products.find(
+      (product) =>
+        product.sku.toLowerCase() === normalized ||
+        product.barcode?.toLowerCase() === normalized,
+    );
+    if (exact) {
+      addToCart(exact);
+      setSearch('');
+    }
   };
 
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -156,6 +201,7 @@ export function RegisterScreen({
               placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
               returnKeyType="search"
+              onSubmitEditing={submitSearch}
             />
             {search ? (
               <Pressable onPress={() => setSearch('')} hitSlop={10}>
@@ -170,17 +216,17 @@ export function RegisterScreen({
             </View>
           ) : (
             <FlatList
-              data={products}
-              keyExtractor={(item) => String(item.id)}
+              data={productGroups}
+              keyExtractor={(item) => String(item.parentId)}
               numColumns={2}
               columnWrapperStyle={styles.productRow}
               contentContainerStyle={[
                 styles.productList,
-                products.length === 0 && styles.emptyList,
+                productGroups.length === 0 && styles.emptyList,
                 !isTablet && cart.length > 0 && styles.productListWithCart,
               ]}
               renderItem={({ item }) => (
-                <ProductTile product={item} onPress={() => addToCart(item)} />
+                <ProductGroupTile group={item} onPress={() => selectGroup(item)} />
               )}
               ListEmptyComponent={
                 <View style={styles.empty}>
@@ -254,6 +300,14 @@ export function RegisterScreen({
         onSetQuantity={setQuantity}
         onCheckout={handleCheckout}
       />
+      <VariantSelectorModal
+        group={selectedGroup}
+        onClose={() => setSelectedGroup(undefined)}
+        onSelect={(product) => {
+          addToCart(product);
+          setSelectedGroup(undefined);
+        }}
+      />
     </View>
   );
 }
@@ -306,7 +360,7 @@ function TabletCartPanel({
               <View style={styles.tabletLineTop}>
                 <View style={styles.lineInfo}>
                   <Text style={styles.lineName} numberOfLines={1}>
-                    {item.name}
+                    {item.name}{item.variantName ? ` · ${item.variantName}` : ''}
                   </Text>
                   <Text style={styles.linePrice}>
                     {formatMoney(item.priceCents)} each
@@ -370,15 +424,21 @@ function TabletCartPanel({
   );
 }
 
-function ProductTile({
-  product,
+function ProductGroupTile({
+  group,
   onPress,
 }: {
-  product: Product;
+  group: ProductGroup;
   onPress: () => void;
 }) {
-  const soldOut = product.stock === 0;
-  const low = product.stock <= product.lowStockThreshold;
+  const totalStock = group.variants.reduce((sum, variant) => sum + variant.stock, 0);
+  const sellable = group.variants.filter((variant) => variant.stock > 0);
+  const soldOut = sellable.length === 0;
+  const low = !soldOut && sellable.every(
+    (variant) => variant.stock <= variant.lowStockThreshold,
+  );
+  const fromPrice = Math.min(...group.variants.map((variant) => variant.priceCents));
+  const image = group.variants.find((variant) => variant.imageUri)?.imageUri;
 
   return (
     <Pressable
@@ -389,11 +449,11 @@ function ProductTile({
       ]}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Add ${product.name} to cart`}
+      accessibilityLabel={`Choose ${group.name}`}
     >
-      {product.imageUri ? (
+      {image ? (
         <Image
-          source={{ uri: product.imageUri }}
+          source={{ uri: image }}
           style={styles.productImage}
           resizeMode="cover"
         />
@@ -407,13 +467,19 @@ function ProductTile({
         </View>
       )}
       <Text style={styles.productName} numberOfLines={2}>
-        {product.name}
+        {group.name}
       </Text>
       <Text style={styles.productSku} numberOfLines={1}>
-        {[product.sku, product.category].filter(Boolean).join(' · ')}
+        {[
+          group.parentSku,
+          group.category,
+          group.variants.length > 1 ? `${group.variants.length} variants` : null,
+        ].filter(Boolean).join(' · ')}
       </Text>
       <View style={styles.tileBottom}>
-        <Text style={styles.productPrice}>{formatMoney(product.priceCents)}</Text>
+        <Text style={styles.productPrice}>
+          {group.variants.length > 1 ? 'From ' : ''}{formatMoney(fromPrice)}
+        </Text>
         <Text
           style={[
             styles.productStock,
@@ -421,10 +487,80 @@ function ProductTile({
             soldOut && styles.outOfStock,
           ]}
         >
-          {soldOut ? 'Out' : `${product.stock} left`}
+          {soldOut ? 'Out' : `${totalStock} total`}
         </Text>
       </View>
     </Pressable>
+  );
+}
+
+function VariantSelectorModal({
+  group,
+  onClose,
+  onSelect,
+}: {
+  group?: ProductGroup;
+  onClose: () => void;
+  onSelect: (product: Product) => void;
+}) {
+  return (
+    <Modal
+      visible={Boolean(group)}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.variantOverlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={styles.variantSheet}>
+          <View style={styles.variantHeader}>
+            <View style={styles.variantHeaderText}>
+              <Text style={styles.variantTitle}>{group?.name}</Text>
+              <Text style={styles.variantSubtitle}>Choose a sellable variant</Text>
+            </View>
+            <Pressable style={styles.variantClose} onPress={onClose}>
+              <Ionicons name="close" size={22} color={colors.text} />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.variantList}>
+            {group?.variants.map((variant) => {
+              const soldOut = variant.stock <= 0;
+              return (
+                <Pressable
+                  key={variant.id}
+                  style={[styles.variantOption, soldOut && styles.soldOutTile]}
+                  onPress={() => onSelect(variant)}
+                  disabled={soldOut}
+                >
+                  {variant.imageUri ? (
+                    <Image source={{ uri: variant.imageUri }} style={styles.variantImage} />
+                  ) : (
+                    <View style={styles.variantImagePlaceholder}>
+                      <Ionicons name="cube-outline" size={20} color={colors.primary} />
+                    </View>
+                  )}
+                  <View style={styles.variantInfo}>
+                    <Text style={styles.variantName}>
+                      {variant.variantName || variant.sku}
+                    </Text>
+                    <Text style={styles.variantSku}>
+                      {variant.sku}{variant.barcode ? ` · ${variant.barcode}` : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.variantNumbers}>
+                    <Text style={styles.variantPrice}>{formatMoney(variant.priceCents)}</Text>
+                    <Text style={[styles.variantStock, soldOut && styles.outOfStock]}>
+                      {soldOut ? 'Out of stock' : `${variant.stock} available`}
+                    </Text>
+                  </View>
+                  <Ionicons name="add-circle" size={25} color={soldOut ? colors.border : colors.primary} />
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -507,7 +643,7 @@ function CheckoutModal({
               <View key={item.id} style={styles.lineItem}>
                 <View style={styles.lineInfo}>
                   <Text style={styles.lineName} numberOfLines={1}>
-                    {item.name}
+                    {item.name}{item.variantName ? ` · ${item.variantName}` : ''}
                   </Text>
                   <Text style={styles.linePrice}>
                     {formatMoney(item.priceCents)} each
@@ -736,6 +872,71 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
+  variantOverlay: {
+    flex: 1,
+    padding: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(11, 61, 44, 0.45)',
+  },
+  variantSheet: {
+    width: '100%',
+    maxWidth: 620,
+    maxHeight: '78%',
+    overflow: 'hidden',
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+  },
+  variantHeader: {
+    padding: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  variantHeaderText: { flex: 1 },
+  variantTitle: { color: colors.text, fontSize: 20, fontWeight: '900' },
+  variantSubtitle: { marginTop: 3, color: colors.textMuted, fontSize: 13 },
+  variantClose: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    backgroundColor: colors.surfaceMuted,
+  },
+  variantList: { padding: spacing.md, gap: spacing.sm },
+  variantOption: {
+    minHeight: 72,
+    padding: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.background,
+  },
+  variantImage: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceMuted,
+  },
+  variantImagePlaceholder: {
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceMuted,
+  },
+  variantInfo: { flex: 1 },
+  variantName: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  variantSku: { marginTop: 3, color: colors.textMuted, fontSize: 11 },
+  variantNumbers: { alignItems: 'flex-end' },
+  variantPrice: { color: colors.primary, fontSize: 14, fontWeight: '900' },
+  variantStock: { marginTop: 3, color: colors.success, fontSize: 11, fontWeight: '700' },
   lowStock: {
     color: colors.warning,
   },
