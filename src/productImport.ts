@@ -575,6 +575,303 @@ function locationCode(name: string): string {
   return code || 'MAIN';
 }
 
+function sqlValue(value: string | number | boolean | null): string {
+  if (value === null) return 'NULL';
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('Import contains a non-finite number.');
+    return String(value);
+  }
+  if (typeof value === 'boolean') return value ? '1' : '0';
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+async function importProductsSetBased(
+  db: SQLiteDatabase,
+  preview: ProductImportPreview,
+): Promise<ProductImportResult> {
+  const values = preview.rows
+    .map((row) =>
+      [
+        row.rowNumber,
+        row.externalVariantId,
+        row.parentSku,
+        row.sku,
+        row.barcode,
+        row.productName,
+        row.variantName,
+        row.brand,
+        row.category,
+        row.subcategory,
+        row.description,
+        row.supplier,
+        row.supplierCode,
+        row.unit,
+        row.costExTaxCents,
+        row.retailPriceIncTaxCents,
+        row.wholesalePriceIncTaxCents,
+        row.taxRateBasisPoints,
+        row.openingStock,
+        row.reorderPoint,
+        row.targetStock,
+        row.stockLocation,
+        locationCode(row.stockLocation),
+        row.batchTracking,
+        row.expiryTracking,
+        row.active,
+        row.imageFilename,
+        row.weight,
+        row.dimensions,
+        row.manufacturer,
+        row.notes,
+        row.createdAt,
+      ]
+        .map(sqlValue)
+        .join(','),
+    )
+    .map((row) => `(${row})`)
+    .join(',\n');
+
+  await db.execAsync(`
+    DROP TABLE IF EXISTS temp.dpos_import_rows;
+    CREATE TEMP TABLE dpos_import_rows (
+      row_number INTEGER,
+      external_variant_id TEXT,
+      parent_sku TEXT COLLATE NOCASE,
+      sku TEXT COLLATE NOCASE,
+      barcode TEXT COLLATE NOCASE,
+      product_name TEXT,
+      variant_name TEXT,
+      brand TEXT,
+      category TEXT COLLATE NOCASE,
+      subcategory TEXT COLLATE NOCASE,
+      description TEXT,
+      supplier TEXT COLLATE NOCASE,
+      supplier_code TEXT,
+      unit TEXT,
+      cost_cents INTEGER,
+      retail_cents INTEGER,
+      wholesale_cents INTEGER,
+      tax_basis_points INTEGER,
+      opening_stock REAL,
+      reorder_point INTEGER,
+      target_stock INTEGER,
+      location_name TEXT COLLATE NOCASE,
+      location_code TEXT COLLATE NOCASE,
+      batch_tracking INTEGER,
+      expiry_tracking INTEGER,
+      active INTEGER,
+      image_filename TEXT,
+      weight TEXT,
+      dimensions TEXT,
+      manufacturer TEXT,
+      notes TEXT,
+      created_at TEXT,
+      is_new INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO dpos_import_rows (
+      row_number, external_variant_id, parent_sku, sku, barcode, product_name,
+      variant_name, brand, category, subcategory, description, supplier,
+      supplier_code, unit, cost_cents, retail_cents, wholesale_cents,
+      tax_basis_points, opening_stock, reorder_point, target_stock,
+      location_name, location_code, batch_tracking, expiry_tracking, active,
+      image_filename, weight, dimensions, manufacturer, notes, created_at
+    ) VALUES ${values};
+
+    UPDATE dpos_import_rows
+      SET is_new = NOT EXISTS (
+        SELECT 1 FROM product_variants v
+        WHERE v.sku = dpos_import_rows.sku COLLATE NOCASE
+      );
+
+    INSERT OR IGNORE INTO categories (parent_id, name)
+      SELECT NULL, category FROM dpos_import_rows
+      WHERE category IS NOT NULL AND TRIM(category) <> ''
+      GROUP BY category COLLATE NOCASE;
+    INSERT OR IGNORE INTO categories (parent_id, name)
+      SELECT c.id, r.subcategory
+      FROM dpos_import_rows r
+      JOIN categories c ON c.parent_id IS NULL
+        AND c.name = r.category COLLATE NOCASE
+      WHERE r.subcategory IS NOT NULL AND TRIM(r.subcategory) <> ''
+      GROUP BY c.id, r.subcategory COLLATE NOCASE;
+
+    INSERT OR IGNORE INTO suppliers (name)
+      SELECT supplier FROM dpos_import_rows
+      WHERE supplier IS NOT NULL AND TRIM(supplier) <> ''
+      GROUP BY supplier COLLATE NOCASE;
+    INSERT OR IGNORE INTO locations (code, name)
+      SELECT location_code, location_name FROM dpos_import_rows
+      GROUP BY location_name COLLATE NOCASE;
+    INSERT OR IGNORE INTO tax_profiles (code, name, rate_basis_points)
+      SELECT 'TAX' || tax_basis_points,
+        'Tax ' || (tax_basis_points / 100.0) || '%', tax_basis_points
+      FROM dpos_import_rows r
+      WHERE NOT EXISTS (
+        SELECT 1 FROM tax_profiles t
+        WHERE t.rate_basis_points = r.tax_basis_points AND t.active = 1
+      )
+      GROUP BY tax_basis_points;
+
+    INSERT OR IGNORE INTO parent_products (
+      parent_sku, name, brand, category_id, subcategory_id, description,
+      manufacturer, notes, active, created_at, updated_at
+    )
+    SELECT r.parent_sku, r.product_name, r.brand, c.id, sc.id, r.description,
+      r.manufacturer, r.notes, r.active,
+      COALESCE(r.created_at, CURRENT_TIMESTAMP),
+      COALESCE(r.created_at, CURRENT_TIMESTAMP)
+    FROM dpos_import_rows r
+    LEFT JOIN categories c ON c.parent_id IS NULL
+      AND c.name = r.category COLLATE NOCASE
+    LEFT JOIN categories sc ON sc.parent_id = c.id
+      AND sc.name = r.subcategory COLLATE NOCASE
+    GROUP BY r.parent_sku COLLATE NOCASE;
+
+    UPDATE parent_products AS p SET
+      name = (SELECT r.product_name FROM dpos_import_rows r
+        WHERE r.parent_sku = p.parent_sku COLLATE NOCASE LIMIT 1),
+      brand = (SELECT r.brand FROM dpos_import_rows r
+        WHERE r.parent_sku = p.parent_sku COLLATE NOCASE LIMIT 1),
+      category_id = (SELECT c.id FROM dpos_import_rows r
+        LEFT JOIN categories c ON c.parent_id IS NULL
+          AND c.name = r.category COLLATE NOCASE
+        WHERE r.parent_sku = p.parent_sku COLLATE NOCASE LIMIT 1),
+      subcategory_id = (SELECT sc.id FROM dpos_import_rows r
+        LEFT JOIN categories c ON c.parent_id IS NULL
+          AND c.name = r.category COLLATE NOCASE
+        LEFT JOIN categories sc ON sc.parent_id = c.id
+          AND sc.name = r.subcategory COLLATE NOCASE
+        WHERE r.parent_sku = p.parent_sku COLLATE NOCASE LIMIT 1),
+      description = (SELECT r.description FROM dpos_import_rows r
+        WHERE r.parent_sku = p.parent_sku COLLATE NOCASE LIMIT 1),
+      manufacturer = (SELECT r.manufacturer FROM dpos_import_rows r
+        WHERE r.parent_sku = p.parent_sku COLLATE NOCASE LIMIT 1),
+      notes = (SELECT r.notes FROM dpos_import_rows r
+        WHERE r.parent_sku = p.parent_sku COLLATE NOCASE LIMIT 1),
+      active = (SELECT r.active FROM dpos_import_rows r
+        WHERE r.parent_sku = p.parent_sku COLLATE NOCASE LIMIT 1),
+      updated_at = CURRENT_TIMESTAMP
+    WHERE EXISTS (
+      SELECT 1 FROM dpos_import_rows r
+      WHERE r.parent_sku = p.parent_sku COLLATE NOCASE
+    );
+
+    UPDATE product_variants AS v SET
+      parent_id = (SELECT p.id FROM dpos_import_rows r
+        JOIN parent_products p ON p.parent_sku = r.parent_sku COLLATE NOCASE
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      external_variant_id = (SELECT r.external_variant_id FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      barcode = (SELECT NULLIF(r.barcode, '') FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      variant_name = (SELECT r.variant_name FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      unit = (SELECT r.unit FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      cost_ex_tax_cents = (SELECT r.cost_cents FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      retail_price_inc_tax_cents = (SELECT r.retail_cents FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      wholesale_price_inc_tax_cents = (SELECT r.wholesale_cents FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      tax_profile_id = (SELECT t.id FROM dpos_import_rows r
+        JOIN tax_profiles t ON t.rate_basis_points = r.tax_basis_points AND t.active = 1
+        WHERE r.sku = v.sku COLLATE NOCASE ORDER BY t.is_default DESC, t.id LIMIT 1),
+      tax_rate_basis_points = (SELECT r.tax_basis_points FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      reorder_point = (SELECT r.reorder_point FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      target_stock = (SELECT r.target_stock FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      batch_tracking = (SELECT r.batch_tracking FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      expiry_tracking = (SELECT r.expiry_tracking FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      image_filename = (SELECT r.image_filename FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      weight = (SELECT r.weight FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      dimensions = (SELECT r.dimensions FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      active = (SELECT r.active FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      updated_at = CURRENT_TIMESTAMP
+    WHERE EXISTS (
+      SELECT 1 FROM dpos_import_rows r
+      WHERE r.sku = v.sku COLLATE NOCASE AND r.is_new = 0
+    );
+
+    INSERT INTO product_variants (
+      parent_id, external_variant_id, sku, barcode, variant_name, unit,
+      cost_ex_tax_cents, retail_price_inc_tax_cents,
+      wholesale_price_inc_tax_cents, tax_profile_id, tax_rate_basis_points,
+      reorder_point, target_stock, batch_tracking, expiry_tracking,
+      image_filename, weight, dimensions, active, created_at, updated_at
+    )
+    SELECT p.id, r.external_variant_id, r.sku, NULLIF(r.barcode, ''),
+      r.variant_name, r.unit, r.cost_cents, r.retail_cents, r.wholesale_cents,
+      (SELECT t.id FROM tax_profiles t
+       WHERE t.rate_basis_points = r.tax_basis_points AND t.active = 1
+       ORDER BY t.is_default DESC, t.id LIMIT 1),
+      r.tax_basis_points, r.reorder_point, r.target_stock, r.batch_tracking,
+      r.expiry_tracking, r.image_filename, r.weight, r.dimensions, r.active,
+      COALESCE(r.created_at, CURRENT_TIMESTAMP),
+      COALESCE(r.created_at, CURRENT_TIMESTAMP)
+    FROM dpos_import_rows r
+    JOIN parent_products p ON p.parent_sku = r.parent_sku COLLATE NOCASE
+    WHERE r.is_new = 1;
+
+    INSERT INTO variant_suppliers (
+      variant_id, supplier_id, supplier_code, cost_ex_tax_cents, is_preferred
+    )
+    SELECT v.id, s.id, r.supplier_code, r.cost_cents, 1
+    FROM dpos_import_rows r
+    JOIN product_variants v ON v.sku = r.sku COLLATE NOCASE
+    JOIN suppliers s ON s.name = r.supplier COLLATE NOCASE
+    WHERE r.supplier IS NOT NULL AND TRIM(r.supplier) <> ''
+    ON CONFLICT(variant_id, supplier_id) DO UPDATE SET
+      supplier_code = excluded.supplier_code,
+      cost_ex_tax_cents = excluded.cost_ex_tax_cents,
+      is_preferred = 1,
+      updated_at = CURRENT_TIMESTAMP;
+
+    INSERT INTO stock_balances (variant_id, location_id, quantity)
+    SELECT v.id, l.id, r.opening_stock
+    FROM dpos_import_rows r
+    JOIN product_variants v ON v.sku = r.sku COLLATE NOCASE
+    JOIN locations l ON l.name = r.location_name COLLATE NOCASE
+    WHERE r.is_new = 1;
+
+    INSERT INTO stock_movements (
+      variant_id, location_id, quantity_delta, movement_type,
+      reference_type, reference_id, reason, created_at
+    )
+    SELECT v.id, l.id, r.opening_stock, 'opening', 'csv_import',
+      r.sku || ':' || r.row_number, 'CSV opening stock',
+      COALESCE(r.created_at, CURRENT_TIMESTAMP)
+    FROM dpos_import_rows r
+    JOIN product_variants v ON v.sku = r.sku COLLATE NOCASE
+    JOIN locations l ON l.name = r.location_name COLLATE NOCASE
+    WHERE r.is_new = 1 AND r.opening_stock > 0;
+  `);
+
+  const created = await db.getFirstAsync<{
+    count: number;
+    opening_stock: number;
+  }>(
+    `SELECT COUNT(*) AS count, COALESCE(SUM(opening_stock), 0) AS opening_stock
+     FROM dpos_import_rows WHERE is_new = 1`,
+  );
+  await db.execAsync('DROP TABLE IF EXISTS temp.dpos_import_rows');
+  return {
+    parentCount: preview.parentCount,
+    variantCount: preview.rows.length,
+    supplierCount: preview.supplierCount,
+    locationCount: preview.locationCount,
+    openingStockUnits: created?.opening_stock ?? 0,
+  };
+}
+
 export async function importProductsCsv(
   db: SQLiteDatabase,
   csvText: string,
@@ -612,6 +909,10 @@ export async function importProductsCsv(
     );
     if (conflict) {
       throw new Error(`Barcode ${conflict.barcode} belongs to another SKU.`);
+    }
+    if (Platform.OS === 'web') {
+      await transaction.execAsync('DROP TABLE IF EXISTS temp.dpos_import_keys');
+      return importProductsSetBased(transaction, preview);
     }
 
     const categories = new Map<string, number>();
