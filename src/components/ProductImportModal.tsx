@@ -36,12 +36,14 @@ export function ProductImportModal({
   const [csvText, setCsvText] = useState('');
   const [preview, setPreview] = useState<ProductImportPreview>();
   const [working, setWorking] = useState(false);
+  const [importError, setImportError] = useState('');
 
   const close = () => {
     if (working) return;
     setFileName('');
     setCsvText('');
     setPreview(undefined);
+    setImportError('');
     onClose();
   };
 
@@ -59,6 +61,7 @@ export function ProductImportModal({
           : await new ExpoFile(asset.uri).text();
       setFileName(asset.name);
       setCsvText(text);
+      setImportError('');
       setPreview(previewProductImportCsv(text));
     } catch (error) {
       Alert.alert('Could not read CSV', getErrorMessage(error));
@@ -69,6 +72,7 @@ export function ProductImportModal({
     if (!preview || preview.issues.some((issue) => issue.severity === 'error')) {
       return;
     }
+    setImportError('');
     setWorking(true);
     try {
       const result = await importProductsCsv(db, csvText);
@@ -82,7 +86,9 @@ export function ProductImportModal({
         `${result.variantCount} variants across ${result.parentCount} products were processed.\n${result.openingStockUnits} opening stock units were added for new SKUs.`,
       );
     } catch (error) {
-      Alert.alert('Import failed', getErrorMessage(error));
+      const message = getErrorMessage(error);
+      setImportError(message);
+      Alert.alert('Import failed', message);
     } finally {
       setWorking(false);
     }
@@ -184,6 +190,12 @@ export function ProductImportModal({
 
         {preview ? (
           <View style={styles.footer}>
+            {importError ? (
+              <View style={styles.importError}>
+                <Ionicons name="alert-circle" size={19} color={colors.danger} />
+                <Text style={styles.importErrorText}>{importError}</Text>
+              </View>
+            ) : null}
             <Pressable
               style={[styles.importButton, (errors > 0 || working) && styles.disabled]}
               onPress={runImport}
@@ -309,6 +321,16 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     backgroundColor: colors.surface,
   },
+  importError: {
+    marginBottom: spacing.sm,
+    padding: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.dangerSoft,
+  },
+  importErrorText: { flex: 1, color: colors.danger, fontSize: 12, fontWeight: '700' },
   importButton: {
     minHeight: 54,
     flexDirection: 'row',

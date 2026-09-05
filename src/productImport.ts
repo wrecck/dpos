@@ -858,7 +858,7 @@ async function importProductsSetBased(
   try {
     await db.execAsync(
       manageTransaction
-        ? `BEGIN IMMEDIATE;\n${importSql}\nCOMMIT;`
+        ? `BEGIN TRANSACTION;\n${importSql}\nCOMMIT;`
         : importSql,
     );
   } catch (error) {
