@@ -388,6 +388,17 @@ export async function migrateDatabase(db: SQLiteDatabase) {
           (code, name, rate_basis_points, is_default) VALUES
           ('GST10', 'GST 10%', 1000, 1),
           ('GSTFREE', 'GST-free', 0, 0);
+        INSERT OR IGNORE INTO tax_profiles
+          (code, name, rate_basis_points)
+        SELECT 'TAX' || tax_rate_basis_points,
+          'Tax ' || (tax_rate_basis_points / 100.0) || '%',
+          tax_rate_basis_points
+        FROM product_variants v
+        WHERE NOT EXISTS (
+          SELECT 1 FROM tax_profiles t
+          WHERE t.rate_basis_points = v.tax_rate_basis_points
+        )
+        GROUP BY tax_rate_basis_points;
         INSERT OR IGNORE INTO store_settings (key, value)
           SELECT 'default_tax_profile_id', CAST(id AS TEXT)
           FROM tax_profiles WHERE code = 'GST10';
@@ -456,6 +467,51 @@ export async function migrateDatabase(db: SQLiteDatabase) {
 
         CREATE INDEX IF NOT EXISTS idx_sale_items_variant_id ON sale_items(variant_id);
         PRAGMA user_version = 3;
+      `);
+    });
+  }
+
+  if (version < 4) {
+    await inTransaction(db, async (transaction) => {
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS tax_profiles (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          code TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          rate_basis_points INTEGER NOT NULL
+            CHECK (rate_basis_points BETWEEN 0 AND 10000),
+          is_default INTEGER NOT NULL DEFAULT 0
+            CHECK (is_default IN (0, 1)),
+          active INTEGER NOT NULL DEFAULT 1
+            CHECK (active IN (0, 1)),
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+      await addColumnIfMissing(
+        transaction,
+        'product_variants',
+        'tax_profile_id',
+        'INTEGER REFERENCES tax_profiles(id) ON DELETE RESTRICT',
+      );
+      await transaction.execAsync(`
+        INSERT OR IGNORE INTO tax_profiles
+          (code, name, rate_basis_points, is_default) VALUES
+          ('GST10', 'GST 10%', 1000, 1),
+          ('GSTFREE', 'GST-free', 0, 0);
+        INSERT OR IGNORE INTO store_settings (key, value)
+          SELECT 'default_tax_profile_id', CAST(id AS TEXT)
+          FROM tax_profiles WHERE code = 'GST10';
+        UPDATE product_variants
+          SET tax_profile_id = (
+            SELECT id FROM tax_profiles t
+            WHERE t.rate_basis_points = product_variants.tax_rate_basis_points
+              AND t.active = 1
+            ORDER BY t.is_default DESC, t.id
+            LIMIT 1
+          )
+          WHERE tax_profile_id IS NULL;
+        PRAGMA user_version = 4;
       `);
     });
   }
