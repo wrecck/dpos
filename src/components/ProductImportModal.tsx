@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import { File } from 'expo-file-system';
+import { File as ExpoFile } from 'expo-file-system';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useState } from 'react';
 import {
@@ -11,6 +11,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  Platform,
   View,
 } from 'react-native';
 
@@ -52,7 +53,10 @@ export function ProductImportModal({
       });
       if (result.canceled) return;
       const asset = result.assets[0];
-      const text = await new File(asset.uri).text();
+      const text =
+        Platform.OS === 'web' && asset.file
+          ? await asset.file.text()
+          : await new ExpoFile(asset.uri).text();
       setFileName(asset.name);
       setCsvText(text);
       setPreview(previewProductImportCsv(text));
@@ -69,10 +73,13 @@ export function ProductImportModal({
     try {
       const result = await importProductsCsv(db, csvText);
       onImported();
+      setFileName('');
+      setCsvText('');
+      setPreview(undefined);
+      onClose();
       Alert.alert(
         'Import complete',
         `${result.variantCount} variants across ${result.parentCount} products were processed.\n${result.openingStockUnits} opening stock units were added for new SKUs.`,
-        [{ text: 'Done', onPress: close }],
       );
     } catch (error) {
       Alert.alert('Import failed', getErrorMessage(error));

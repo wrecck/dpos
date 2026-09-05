@@ -181,10 +181,14 @@ export function StockReceiptModal({
         lines: receiptLines,
       });
       onReceived();
+      setReference('');
+      setNotes('');
+      setSearch('');
+      setLines([]);
+      onClose();
       Alert.alert(
         'Stock received',
         `Delivery #${deliveryId} posted with ${lines.length} line${lines.length === 1 ? '' : 's'}.`,
-        [{ text: 'Done', onPress: resetAndClose }],
       );
     } catch (error) {
       Alert.alert('Could not receive stock', getErrorMessage(error));
