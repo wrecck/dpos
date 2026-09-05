@@ -213,7 +213,12 @@ function validImageMagic(bytes: Uint8Array, ext: string): boolean {
 }
 
 async function sha256(bytes: Uint8Array): Promise<string> {
-  const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, bytes);
+  const stableBytes = new Uint8Array(bytes.byteLength);
+  stableBytes.set(bytes);
+  const digest = await Crypto.digest(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    stableBytes.buffer,
+  );
   return Array.from(new Uint8Array(digest))
     .map((value) => value.toString(16).padStart(2, '0'))
     .join('');
