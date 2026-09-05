@@ -1,0 +1,7 @@
+{
+  "format": "dpos-product-import",
+  "version": 1,
+  "createdAt": "2026-09-05T00:00:00Z",
+  "productsFile": "dpos-products-import.csv",
+  "imagesDirectory": "images"
+}

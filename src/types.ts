@@ -19,6 +19,7 @@ export type Product = {
   targetStock: number;
   locationId: number;
   location: string;
+  binLocation: string | null;
   imageUri: string | null;
   imageFilename: string | null;
   category: string | null;
@@ -158,6 +159,82 @@ export type ProductImportIssue = {
   message: string;
 };
 
+export type ProductImportMode = 'strict' | 'valid_rows';
+
+export type ProductImportRunStatus = 'completed' | 'failed' | 'cancelled';
+
+export type ProductImportIssueSeverity = 'warning' | 'error';
+
+export type ProductImportReportIssueInput = {
+  rowNumber: number | null;
+  sku: string | null;
+  severity: ProductImportIssueSeverity;
+  code: string;
+  message: string;
+};
+
+export type ProductImportReportIssue = ProductImportReportIssueInput & {
+  id: number;
+  runId: number;
+};
+
+export type ProductImportRunSummary = {
+  id: number;
+  sourceFilename: string;
+  sourceHash: string | null;
+  packageFormatVersion: string;
+  importMode: ProductImportMode;
+  status: ProductImportRunStatus;
+  totalCsvRows: number;
+  parentProductCount: number;
+  variantsAdded: number;
+  variantsUpdated: number;
+  variantsSkipped: number;
+  imagesImported: number;
+  imagesMissing: number;
+  warningCount: number;
+  errorCount: number;
+  startedAt: string;
+  completedAt: string;
+};
+
+export type ProductImportRunHistory = ProductImportRunSummary[];
+
+export type ProductImportRun = ProductImportRunSummary & {
+  issues: ProductImportReportIssue[];
+};
+
+export type ProductImportReportInput = Omit<
+  ProductImportRunSummary,
+  'id' | 'warningCount' | 'errorCount' | 'completedAt'
+> & {
+  completedAt?: string;
+  issues: ProductImportReportIssueInput[];
+};
+
+export type FailedProductImportReportInput = Pick<
+  ProductImportReportInput,
+  | 'sourceFilename'
+  | 'sourceHash'
+  | 'packageFormatVersion'
+  | 'importMode'
+  | 'startedAt'
+  | 'completedAt'
+  | 'issues'
+> &
+  Partial<
+    Pick<
+      ProductImportReportInput,
+      | 'totalCsvRows'
+      | 'parentProductCount'
+      | 'variantsAdded'
+      | 'variantsUpdated'
+      | 'variantsSkipped'
+      | 'imagesImported'
+      | 'imagesMissing'
+    >
+  >;
+
 export type ProductImportRow = {
   rowNumber: number;
   externalVariantId: string | null;
@@ -185,6 +262,8 @@ export type ProductImportRow = {
   expiryTracking: boolean;
   active: boolean;
   imageFilename: string | null;
+  imageUri?: string | null;
+  binLocation?: string | null;
   weight: string | null;
   dimensions: string | null;
   manufacturer: string | null;
@@ -205,6 +284,8 @@ export type ProductImportPreview = {
 export type ProductImportResult = {
   parentCount: number;
   variantCount: number;
+  variantsAdded: number;
+  variantsUpdated: number;
   supplierCount: number;
   locationCount: number;
   openingStockUnits: number;

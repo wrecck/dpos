@@ -4,9 +4,14 @@ import { Platform } from 'react-native';
 import type {
   CartItem,
   DashboardStats,
+  FailedProductImportReportInput,
   Location,
   PaymentMethod,
   Product,
+  ProductImportReportInput,
+  ProductImportReportIssue,
+  ProductImportRun,
+  ProductImportRunSummary,
   ProductInput,
   Sale,
   StockAdjustmentInput,
@@ -33,6 +38,7 @@ type ProductRow = {
   target_stock: number;
   location_id: number;
   location: string;
+  bin_location: string | null;
   image_uri: string | null;
   image_filename: string | null;
   category: string | null;
@@ -183,6 +189,7 @@ const NORMALIZED_SCHEMA = `
     expiry_tracking INTEGER NOT NULL DEFAULT 0 CHECK (expiry_tracking IN (0, 1)),
     image_filename TEXT,
     image_uri TEXT,
+    bin_location TEXT,
     weight TEXT,
     dimensions TEXT,
     colors TEXT,
@@ -515,6 +522,60 @@ export async function migrateDatabase(db: SQLiteDatabase) {
       `);
     });
   }
+
+  if (version < 5) {
+    await inTransaction(db, async (transaction) => {
+      await addColumnIfMissing(
+        transaction,
+        'product_variants',
+        'bin_location',
+        'TEXT',
+      );
+      await transaction.execAsync(`
+        CREATE TABLE IF NOT EXISTS product_import_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          source_filename TEXT NOT NULL,
+          source_hash TEXT,
+          package_format_version TEXT NOT NULL,
+          import_mode TEXT NOT NULL CHECK (import_mode IN ('strict', 'valid_rows')),
+          status TEXT NOT NULL CHECK (status IN ('completed', 'failed', 'cancelled')),
+          total_csv_rows INTEGER NOT NULL DEFAULT 0 CHECK (total_csv_rows >= 0),
+          parent_product_count INTEGER NOT NULL DEFAULT 0 CHECK (parent_product_count >= 0),
+          variants_added INTEGER NOT NULL DEFAULT 0 CHECK (variants_added >= 0),
+          variants_updated INTEGER NOT NULL DEFAULT 0 CHECK (variants_updated >= 0),
+          variants_skipped INTEGER NOT NULL DEFAULT 0 CHECK (variants_skipped >= 0),
+          images_imported INTEGER NOT NULL DEFAULT 0 CHECK (images_imported >= 0),
+          images_missing INTEGER NOT NULL DEFAULT 0 CHECK (images_missing >= 0),
+          warning_count INTEGER NOT NULL DEFAULT 0 CHECK (warning_count >= 0),
+          error_count INTEGER NOT NULL DEFAULT 0 CHECK (error_count >= 0),
+          started_at TEXT NOT NULL,
+          completed_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS product_import_issues (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id INTEGER NOT NULL REFERENCES product_import_runs(id) ON DELETE CASCADE,
+          csv_row_number INTEGER CHECK (csv_row_number IS NULL OR csv_row_number > 0),
+          sku TEXT,
+          severity TEXT NOT NULL CHECK (severity IN ('warning', 'error')),
+          code TEXT NOT NULL,
+          message TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_product_import_runs_started_at
+          ON product_import_runs(started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_product_import_runs_status
+          ON product_import_runs(status, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_product_import_issues_run
+          ON product_import_issues(run_id, id);
+        CREATE INDEX IF NOT EXISTS idx_product_import_issues_run_severity
+          ON product_import_issues(run_id, severity);
+        CREATE INDEX IF NOT EXISTS idx_product_import_issues_code
+          ON product_import_issues(code);
+        PRAGMA user_version = 5;
+      `);
+    });
+  }
 }
 
 const productSelect = (locationExpression = '?') => `
@@ -524,7 +585,8 @@ const productSelect = (locationExpression = '?') => `
     v.wholesale_price_inc_tax_cents AS wholesale_price_cents,
     v.cost_ex_tax_cents, v.tax_rate_basis_points,
     COALESCE(sb.quantity, 0) AS stock, v.reorder_point, v.target_stock,
-    l.id AS location_id, l.name AS location, v.image_uri, v.image_filename,
+    l.id AS location_id, l.name AS location, v.bin_location,
+    v.image_uri, v.image_filename,
     c.name AS category, sc.name AS subcategory, p.description, v.unit,
     v.weight, v.dimensions, v.colors, v.sizes, p.brand,
     s.name AS supplier, vs.supplier_code, p.manufacturer,
@@ -560,6 +622,7 @@ const mapProduct = (row: ProductRow): Product => ({
   targetStock: row.target_stock,
   locationId: row.location_id,
   location: row.location,
+  binLocation: row.bin_location,
   imageUri: row.image_uri,
   imageFilename: row.image_filename,
   category: row.category,
@@ -766,7 +829,7 @@ export async function saveProduct(
            retail_price_inc_tax_cents = ?, wholesale_price_inc_tax_cents = ?,
            tax_profile_id = ?, tax_rate_basis_points = ?, reorder_point = ?, target_stock = ?,
            batch_tracking = ?, expiry_tracking = ?, image_filename = ?,
-           image_uri = ?, weight = ?, dimensions = ?, colors = ?, sizes = ?,
+           image_uri = ?, bin_location = ?, weight = ?, dimensions = ?, colors = ?, sizes = ?,
            legacy_variants = ?, active = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         input.externalVariantId ?? null,
@@ -785,6 +848,7 @@ export async function saveProduct(
         input.expiryTracking ? 1 : 0,
         input.imageFilename ?? null,
         input.imageUri,
+        input.binLocation ?? null,
         input.weight,
         input.dimensions,
         input.colors,
@@ -839,8 +903,9 @@ export async function saveProduct(
            cost_ex_tax_cents, retail_price_inc_tax_cents,
            wholesale_price_inc_tax_cents, tax_profile_id, tax_rate_basis_points, reorder_point,
            target_stock, batch_tracking, expiry_tracking, image_filename,
-           image_uri, weight, dimensions, colors, sizes, legacy_variants, active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           image_uri, bin_location, weight, dimensions, colors, sizes,
+           legacy_variants, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         parentId,
         input.externalVariantId ?? null,
         input.sku.trim(),
@@ -858,6 +923,7 @@ export async function saveProduct(
         input.expiryTracking ? 1 : 0,
         input.imageFilename ?? null,
         input.imageUri,
+        input.binLocation ?? null,
         input.weight,
         input.dimensions,
         input.colors,
@@ -1415,4 +1481,189 @@ export async function saveStoreSettings(
       taxProfileId,
     );
   });
+}
+
+type ProductImportRunRow = {
+  id: number;
+  source_filename: string;
+  source_hash: string | null;
+  package_format_version: string;
+  import_mode: ProductImportRunSummary['importMode'];
+  status: ProductImportRunSummary['status'];
+  total_csv_rows: number;
+  parent_product_count: number;
+  variants_added: number;
+  variants_updated: number;
+  variants_skipped: number;
+  images_imported: number;
+  images_missing: number;
+  warning_count: number;
+  error_count: number;
+  started_at: string;
+  completed_at: string;
+};
+
+type ProductImportIssueRow = {
+  id: number;
+  run_id: number;
+  csv_row_number: number | null;
+  sku: string | null;
+  severity: ProductImportReportIssue['severity'];
+  code: string;
+  message: string;
+};
+
+const mapProductImportRun = (
+  row: ProductImportRunRow,
+): ProductImportRunSummary => ({
+  id: row.id,
+  sourceFilename: row.source_filename,
+  sourceHash: row.source_hash,
+  packageFormatVersion: row.package_format_version,
+  importMode: row.import_mode,
+  status: row.status,
+  totalCsvRows: row.total_csv_rows,
+  parentProductCount: row.parent_product_count,
+  variantsAdded: row.variants_added,
+  variantsUpdated: row.variants_updated,
+  variantsSkipped: row.variants_skipped,
+  imagesImported: row.images_imported,
+  imagesMissing: row.images_missing,
+  warningCount: row.warning_count,
+  errorCount: row.error_count,
+  startedAt: row.started_at,
+  completedAt: row.completed_at,
+});
+
+const mapProductImportIssue = (
+  row: ProductImportIssueRow,
+): ProductImportReportIssue => ({
+  id: row.id,
+  runId: row.run_id,
+  rowNumber: row.csv_row_number,
+  sku: row.sku,
+  severity: row.severity,
+  code: row.code,
+  message: row.message,
+});
+
+/**
+ * Persists one final package-import report and all of its issues in a single
+ * transaction. No in-progress row is created, so an interrupted import cannot
+ * leave a dangling report.
+ */
+export async function saveProductImportReport(
+  db: SQLiteDatabase,
+  report: ProductImportReportInput,
+): Promise<number> {
+  return inTransaction(db, async (transaction) => {
+    const warningCount = report.issues.filter(
+      (issue) => issue.severity === 'warning',
+    ).length;
+    const errorCount = report.issues.length - warningCount;
+    const result = await transaction.runAsync(
+      `INSERT INTO product_import_runs
+        (source_filename, source_hash, package_format_version, import_mode,
+         status, total_csv_rows, parent_product_count, variants_added,
+         variants_updated, variants_skipped, images_imported, images_missing,
+         warning_count, error_count, started_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      report.sourceFilename,
+      report.sourceHash,
+      report.packageFormatVersion,
+      report.importMode,
+      report.status,
+      report.totalCsvRows,
+      report.parentProductCount,
+      report.variantsAdded,
+      report.variantsUpdated,
+      report.variantsSkipped,
+      report.imagesImported,
+      report.imagesMissing,
+      warningCount,
+      errorCount,
+      report.startedAt,
+      report.completedAt ?? new Date().toISOString(),
+    );
+    const runId = Number(result.lastInsertRowId);
+    for (const issue of report.issues) {
+      await transaction.runAsync(
+        `INSERT INTO product_import_issues
+          (run_id, csv_row_number, sku, severity, code, message)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        runId,
+        issue.rowNumber,
+        issue.sku,
+        issue.severity,
+        issue.code,
+        issue.message,
+      );
+    }
+    return runId;
+  });
+}
+
+export async function saveFailedProductImportRun(
+  db: SQLiteDatabase,
+  report: FailedProductImportReportInput,
+): Promise<number> {
+  return saveProductImportReport(db, {
+    ...report,
+    status: 'failed',
+    totalCsvRows: report.totalCsvRows ?? 0,
+    parentProductCount: report.parentProductCount ?? 0,
+    variantsAdded: report.variantsAdded ?? 0,
+    variantsUpdated: report.variantsUpdated ?? 0,
+    variantsSkipped: report.variantsSkipped ?? 0,
+    imagesImported: report.imagesImported ?? 0,
+    imagesMissing: report.imagesMissing ?? 0,
+  });
+}
+
+export async function listProductImportRuns(
+  db: SQLiteDatabase,
+  limit = 50,
+): Promise<ProductImportRunSummary[]> {
+  const rows = await db.getAllAsync<ProductImportRunRow>(
+    `SELECT * FROM product_import_runs
+     ORDER BY started_at DESC, id DESC LIMIT ?`,
+    Math.min(Math.max(Math.trunc(limit), 1), 500),
+  );
+  return rows.map(mapProductImportRun);
+}
+
+export async function getProductImportRun(
+  db: SQLiteDatabase,
+  id: number,
+): Promise<ProductImportRun | null> {
+  const row = await db.getFirstAsync<ProductImportRunRow>(
+    'SELECT * FROM product_import_runs WHERE id = ?',
+    id,
+  );
+  if (!row) return null;
+  const issueRows = await db.getAllAsync<ProductImportIssueRow>(
+    `SELECT * FROM product_import_issues
+     WHERE run_id = ?
+     ORDER BY CASE severity WHEN 'error' THEN 0 ELSE 1 END,
+       csv_row_number IS NULL DESC, csv_row_number, id`,
+    id,
+  );
+  return {
+    ...mapProductImportRun(row),
+    issues: issueRows.map(mapProductImportIssue),
+  };
+}
+
+export async function updateProductImageUriBySku(
+  db: SQLiteDatabase,
+  sku: string,
+  imageUri: string | null,
+): Promise<boolean> {
+  const result = await db.runAsync(
+    `UPDATE product_variants SET image_uri = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE sku = ? COLLATE NOCASE`,
+    imageUri,
+    sku.trim(),
+  );
+  return result.changes === 1;
 }

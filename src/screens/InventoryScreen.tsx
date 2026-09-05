@@ -283,6 +283,9 @@ function ProductRow({
               {[product.category, product.brand].filter(Boolean).join(' · ')}
             </Text>
           ) : null}
+          <Text style={styles.productLocation} numberOfLines={1}>
+            {[product.location, product.binLocation].filter(Boolean).join(' · ')}
+          </Text>
         </View>
         <Text style={styles.price}>{formatMoney(product.priceCents)}</Text>
       </View>
@@ -460,6 +463,10 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: 12,
     fontWeight: '600',
+  },
+  productLocation: {
+    color: colors.textMuted,
+    fontSize: 11,
   },
   price: {
     color: colors.primary,

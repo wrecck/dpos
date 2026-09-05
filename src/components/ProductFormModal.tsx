@@ -40,6 +40,7 @@ type FormState = {
   stock: string;
   lowStockThreshold: string;
   targetStock: string;
+  binLocation: string;
   imageUri: string;
   category: string;
   subcategory: string;
@@ -73,6 +74,7 @@ const emptyForm: FormState = {
   stock: '0',
   lowStockThreshold: '5',
   targetStock: '0',
+  binLocation: '',
   imageUri: '',
   category: '',
   subcategory: '',
@@ -124,6 +126,7 @@ export function ProductFormModal({
             stock: String(product.stock),
             lowStockThreshold: String(product.lowStockThreshold),
             targetStock: String(product.targetStock),
+            binLocation: product.binLocation ?? '',
             imageUri: product.imageUri ?? '',
             category: product.category ?? '',
             subcategory: product.subcategory ?? '',
@@ -237,6 +240,7 @@ export function ProductFormModal({
           lowStockThreshold,
           reorderPoint: lowStockThreshold,
           targetStock,
+          binLocation: optionalValue(form.binLocation),
           imageUri: optionalValue(form.imageUri),
           category: optionalValue(form.category),
           subcategory: optionalValue(form.subcategory),
@@ -409,6 +413,13 @@ export function ProductFormModal({
             value={form.unit}
             onChangeText={(value) => update('unit', value)}
             placeholder="Each, kg, mL, pack"
+          />
+          <Field
+            label="Bin location"
+            value={form.binLocation}
+            onChangeText={(value) => update('binLocation', value)}
+            placeholder="e.g. A-02 or Shelf 4"
+            help="Shelf or bin inside the selected store location."
           />
           <ToggleField
             label="Batch tracking"

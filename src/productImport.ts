@@ -34,6 +34,7 @@ export const DPOS_IMPORT_HEADERS = [
   'Expiry Tracking',
   'Active',
   'Image Filename',
+  'Bin Location',
   'Weight',
   'Dimensions',
   'Manufacturer',
@@ -73,6 +74,7 @@ const aliases: Record<string, string> = {
   expirytracking: 'Expiry Tracking',
   active: 'Active',
   imagefilename: 'Image Filename',
+  binlocation: 'Bin Location',
   weight: 'Weight',
   dimensions: 'Dimensions',
   manufacturer: 'Manufacturer',
@@ -518,6 +520,8 @@ export function previewProductImportCsv(csvText: string): ProductImportPreview {
         true,
       ),
       imageFilename,
+      imageUri: null,
+      binLocation: optional(get(csvRow, 'Bin Location')),
       weight: optional(get(csvRow, 'Weight')),
       dimensions: optional(get(csvRow, 'Dimensions')),
       manufacturer: optional(get(csvRow, 'Manufacturer')),
@@ -620,6 +624,8 @@ async function importProductsSetBased(
         row.expiryTracking,
         row.active,
         row.imageFilename,
+        row.imageUri ?? null,
+        row.binLocation ?? null,
         row.weight,
         row.dimensions,
         row.manufacturer,
@@ -662,6 +668,8 @@ async function importProductsSetBased(
       expiry_tracking INTEGER,
       active INTEGER,
       image_filename TEXT,
+      image_uri TEXT,
+      bin_location TEXT,
       weight TEXT,
       dimensions TEXT,
       manufacturer TEXT,
@@ -675,7 +683,8 @@ async function importProductsSetBased(
       supplier_code, unit, cost_cents, retail_cents, wholesale_cents,
       tax_basis_points, opening_stock, reorder_point, target_stock,
       location_name, location_code, batch_tracking, expiry_tracking, active,
-      image_filename, weight, dimensions, manufacturer, notes, created_at
+      image_filename, image_uri, bin_location, weight, dimensions, manufacturer,
+      notes, created_at
     ) VALUES ${values};
 
     UPDATE dpos_import_rows
@@ -790,6 +799,13 @@ async function importProductsSetBased(
         WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
       image_filename = (SELECT r.image_filename FROM dpos_import_rows r
         WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+      image_uri = COALESCE(
+        (SELECT r.image_uri FROM dpos_import_rows r
+         WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
+        image_uri
+      ),
+      bin_location = (SELECT r.bin_location FROM dpos_import_rows r
+        WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
       weight = (SELECT r.weight FROM dpos_import_rows r
         WHERE r.sku = v.sku COLLATE NOCASE LIMIT 1),
       dimensions = (SELECT r.dimensions FROM dpos_import_rows r
@@ -807,7 +823,8 @@ async function importProductsSetBased(
       cost_ex_tax_cents, retail_price_inc_tax_cents,
       wholesale_price_inc_tax_cents, tax_profile_id, tax_rate_basis_points,
       reorder_point, target_stock, batch_tracking, expiry_tracking,
-      image_filename, weight, dimensions, active, created_at, updated_at
+      image_filename, image_uri, bin_location, weight, dimensions, active,
+      created_at, updated_at
     )
     SELECT p.id, r.external_variant_id, r.sku, NULLIF(r.barcode, ''),
       r.variant_name, r.unit, r.cost_cents, r.retail_cents, r.wholesale_cents,
@@ -815,7 +832,8 @@ async function importProductsSetBased(
        WHERE t.rate_basis_points = r.tax_basis_points AND t.active = 1
        ORDER BY t.is_default DESC, t.id LIMIT 1),
       r.tax_basis_points, r.reorder_point, r.target_stock, r.batch_tracking,
-      r.expiry_tracking, r.image_filename, r.weight, r.dimensions, r.active,
+      r.expiry_tracking, r.image_filename, r.image_uri, r.bin_location,
+      r.weight, r.dimensions, r.active,
       COALESCE(r.created_at, CURRENT_TIMESTAMP),
       COALESCE(r.created_at, CURRENT_TIMESTAMP)
     FROM dpos_import_rows r
@@ -879,6 +897,8 @@ async function importProductsSetBased(
   return {
     parentCount: preview.parentCount,
     variantCount: preview.rows.length,
+    variantsAdded: created?.count ?? 0,
+    variantsUpdated: preview.rows.length - (created?.count ?? 0),
     supplierCount: preview.supplierCount,
     locationCount: preview.locationCount,
     openingStockUnits: created?.opening_stock ?? 0,
@@ -896,6 +916,32 @@ export async function importProductsCsv(
       `Import has ${errors.length} error${errors.length === 1 ? '' : 's'}; first: row ${errors[0].row} ${errors[0].message}`,
     );
   }
+  return importProductRows(db, preview.rows);
+}
+
+export async function importProductRows(
+  db: SQLiteDatabase,
+  rows: ProductImportRow[],
+): Promise<ProductImportResult> {
+  if (rows.length === 0) {
+    throw new Error('No valid product rows are available to import.');
+  }
+  const preview: ProductImportPreview = {
+    rows,
+    issues: [],
+    validRowCount: rows.length,
+    parentCount: new Set(rows.map((row) => row.parentSku.toLowerCase())).size,
+    supplierCount: new Set(
+      rows.map((row) => row.supplier?.toLowerCase()).filter(Boolean),
+    ).size,
+    locationCount: new Set(
+      rows.map((row) => row.stockLocation.toLowerCase()),
+    ).size,
+    calculatedInventoryValueCents: rows.reduce(
+      (sum, row) => sum + row.costExTaxCents * row.openingStock,
+      0,
+    ),
+  };
   if (Platform.OS === 'web') {
     const incomingByBarcode = new Map(
       preview.rows
@@ -1036,6 +1082,7 @@ export async function importProductsCsv(
     };
 
     let openingStockUnits = 0;
+    let variantsAdded = 0;
     for (const row of preview.rows) {
       const categoryId = await getCategory(row.category, null);
       const subcategoryId = await getCategory(row.subcategory, categoryId);
@@ -1091,6 +1138,7 @@ export async function importProductsCsv(
         row.sku,
       );
       const isNewVariant = !existingVariant;
+      if (isNewVariant) variantsAdded += 1;
       const taxProfileId = await getTaxProfile(row.taxRateBasisPoints);
       let variantId: number;
       if (existingVariant) {
@@ -1101,6 +1149,7 @@ export async function importProductsCsv(
              retail_price_inc_tax_cents = ?, wholesale_price_inc_tax_cents = ?,
              tax_profile_id = ?, tax_rate_basis_points = ?, reorder_point = ?, target_stock = ?,
              batch_tracking = ?, expiry_tracking = ?, image_filename = ?,
+             image_uri = COALESCE(?, image_uri), bin_location = ?,
              active = ?, weight = ?, dimensions = ?,
              updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
           parentId,
@@ -1118,6 +1167,8 @@ export async function importProductsCsv(
           row.batchTracking ? 1 : 0,
           row.expiryTracking ? 1 : 0,
           row.imageFilename,
+          row.imageUri ?? null,
+          row.binLocation ?? null,
           row.active ? 1 : 0,
           row.weight,
           row.dimensions,
@@ -1130,8 +1181,8 @@ export async function importProductsCsv(
              cost_ex_tax_cents, retail_price_inc_tax_cents,
              wholesale_price_inc_tax_cents, tax_profile_id, tax_rate_basis_points, reorder_point,
              target_stock, batch_tracking, expiry_tracking, image_filename,
-             active, created_at, updated_at, weight, dimensions)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+             image_uri, bin_location, active, created_at, updated_at, weight, dimensions)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
              COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP), ?, ?)`,
           parentId,
           row.externalVariantId,
@@ -1149,6 +1200,8 @@ export async function importProductsCsv(
           row.batchTracking ? 1 : 0,
           row.expiryTracking ? 1 : 0,
           row.imageFilename,
+          row.imageUri ?? null,
+          row.binLocation ?? null,
           row.active ? 1 : 0,
           row.createdAt,
           row.createdAt,
@@ -1203,9 +1256,44 @@ export async function importProductsCsv(
     return {
       parentCount: parents.size,
       variantCount: preview.rows.length,
+      variantsAdded,
+      variantsUpdated: preview.rows.length - variantsAdded,
       supplierCount: suppliers.size,
       locationCount: locations.size,
       openingStockUnits,
     };
   });
+}
+
+export async function validateProductImportDatabaseConflicts(
+  db: SQLiteDatabase,
+  rows: ProductImportRow[],
+): Promise<ProductImportIssue[]> {
+  const issues: ProductImportIssue[] = [];
+  const rowsByBarcode = new Map(
+    rows
+      .filter((row) => row.barcode)
+      .map((row) => [row.barcode.toLowerCase(), row]),
+  );
+  const barcodes = [...rowsByBarcode.keys()];
+  for (let offset = 0; offset < barcodes.length; offset += 400) {
+    const chunk = barcodes.slice(offset, offset + 400);
+    const existing = await db.getAllAsync<{ sku: string; barcode: string }>(
+      `SELECT sku, barcode FROM product_variants
+       WHERE barcode IN (${chunk.map(() => '?').join(',')})`,
+      ...chunk,
+    );
+    for (const product of existing) {
+      const incoming = rowsByBarcode.get(product.barcode.toLowerCase());
+      if (incoming && incoming.sku.toLowerCase() !== product.sku.toLowerCase()) {
+        issues.push({
+          row: incoming.rowNumber,
+          field: 'Barcode',
+          severity: 'error',
+          message: `Barcode ${incoming.barcode} already belongs to SKU ${product.sku}.`,
+        });
+      }
+    }
+  }
+  return issues;
 }

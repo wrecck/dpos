@@ -54,13 +54,16 @@ floating-point rounding errors. New stores default to AUD, 10% GST,
 tax-inclusive selling prices, and Main Store. Use the settings button in the
 app header to change these values.
 
-## Product CSV import
+## Product package import
 
-Use [`docs/dpos-product-import-template.csv`](docs/dpos-product-import-template.csv)
-as the canonical one-row-per-variant template. The complete field rules and
-legacy GST-header aliases are documented in
-[`docs/product-import-format.md`](docs/product-import-format.md). Re-importing
-an existing SKU updates its catalog data without resetting its current stock.
+Create a ZIP containing
+[`docs/dpos-import-manifest.json`](docs/dpos-import-manifest.json),
+[`docs/dpos-product-import-template.csv`](docs/dpos-product-import-template.csv)
+and an `images/` directory. The complete package structure, validation rules,
+strict/partial modes and legacy GST-header aliases are documented in
+[`docs/product-import-format.md`](docs/product-import-format.md). Re-importing an
+existing SKU updates catalog data without resetting live stock. Persistent
+reports list added, updated and skipped variants and can be exported as CSV.
 
 ## Checks
 

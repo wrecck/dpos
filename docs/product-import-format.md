@@ -1,83 +1,103 @@
-# DPOS product import format
+# DPOS product import package
 
-Use UTF-8 CSV with one row per sellable variant. Download
-`dpos-product-import-template.csv` as the canonical header and example. CSV follows
-RFC 4180: quote fields containing commas, quotes, or line breaks and escape a quote
-as `""`.
+DPOS imports a versioned ZIP package so catalog data and local product images
+arrive together.
 
-## Required and unique values
+```text
+dpos-product-import.zip
+├── manifest.json
+├── dpos-products-import.csv
+└── images/
+    ├── SHAMPOO-01-250.png
+    └── SHAMPOO-01-500.jpg
+```
 
-`Parent SKU`, `SKU`, `Product Name`, `Cost ex Tax`, and
-`Retail Price inc Tax` are required. SKU must be unique. A barcode is optional,
-but when present it must be unique within the file and database. Variants with the same Parent SKU become variants of one
-parent product; their parent name, brand, category, and subcategory must agree.
+The ZIP must not be password protected. Files outside this structure are
+ignored or reported. Nested image folders, symlinks, absolute paths and `..`
+paths are rejected. Current limits are 250 MB compressed, 600 MB expanded,
+20,000 entries, 25 MB for the CSV and 12 MB per image.
 
-The importer also accepts these legacy sample names:
+## Manifest
 
-- `Product ID` for `External Variant ID`
-- `Variant` for `Variant Name`
-- `Cost ex GST`, `Retail Price inc GST`, `Wholesale Price inc GST`, and
-  `GST Rate` for their Tax equivalents
-- `Created Date` for `Created At`
+`manifest.json` must be at the ZIP root:
 
-Legacy `Image Path`, `Margin %`, and `Inventory Value` columns are ignored.
-Margin and inventory value are always calculated from normalized prices, cost,
-and stock. They are never trusted as source data.
+```json
+{
+  "format": "dpos-product-import",
+  "version": 1,
+  "createdAt": "2026-09-05T00:00:00Z",
+  "productsFile": "dpos-products-import.csv",
+  "imagesDirectory": "images"
+}
+```
 
-## Columns
+The manifest version allows DPOS to reject unsupported future formats safely.
+
+## CSV
+
+Use UTF-8 CSV with one row per sellable variant. The canonical header and
+example are in `dpos-product-import-template.csv`. CSV follows RFC 4180: quote
+fields containing commas, quotes or line breaks and escape a quote as `""`.
+
+`Parent SKU`, `SKU`, `Product Name`, `Cost ex Tax` and
+`Retail Price inc Tax` are required. SKU must be unique. Barcode is optional,
+but when present must be unique. Rows sharing a Parent SKU become variants of
+one parent product and must agree on parent name, brand, category and
+subcategory.
+
+Legacy aliases remain accepted:
+
+- `Product ID` → `External Variant ID`
+- `Variant` → `Variant Name`
+- `Cost ex GST`, `Retail Price inc GST`, `Wholesale Price inc GST`, `GST Rate`
+  → their Tax equivalents
+- `Created Date` → `Created At`
+
+Legacy `Image Path`, `Margin %` and `Inventory Value` columns are ignored.
+Margin and inventory value are calculated by DPOS.
+
+## Important columns
 
 | Column | Rules |
 | --- | --- |
-| External Variant ID | Optional source-system identifier. |
-| Parent SKU | Required grouping key for the parent product. |
-| SKU | Required unique sellable-variant SKU. |
-| Barcode | Optional unique barcode; retain leading zeroes by exporting it as text. |
-| Product Name | Required parent product name. |
-| Variant Name | Optional variant label, such as `250 mL`. |
-| Brand, Category, Subcategory, Description | Optional parent attributes. |
-| Supplier, Supplier Code | Optional preferred supplier and that supplier's code for this variant. |
-| Unit | Defaults to `Each`. |
-| Cost ex Tax | Non-negative decimal currency amount, at most two decimal places. |
-| Retail Price inc Tax | Required non-negative decimal currency amount. |
-| Wholesale Price inc Tax | Optional non-negative decimal currency amount. |
-| Tax Rate | Decimal fraction (`0.1`), percentage (`10`), or percent (`10%`). Blank defaults to 10%. Stored as integer basis points. |
-| Opening Stock | Non-negative quantity; decimals are supported for weighted goods. Blank is zero. |
-| Reorder Point, Target Stock | Non-negative whole units; blank is zero. |
-| Stock Location | Location name; blank means `Main Store`. New names create location records. |
-| Batch Tracking, Expiry Tracking, Active | `Yes`/`No`; also accepts `true`/`false` and `1`/`0`. |
-| Image Filename | Filename only, for example `item-01.png`; paths are rejected. |
-| Weight, Dimensions, Manufacturer, Notes | Optional descriptive values. |
-| Created At | Optional ISO date or timestamp, for example `2026-09-05`. |
+| Parent SKU | Required parent grouping key. |
+| SKU | Required unique sellable-variant SKU. Existing SKUs are updated. |
+| Barcode | Optional unique barcode; preserve leading zeroes as text. |
+| Product Name, Variant Name | Parent name and optional variant label. |
+| Cost ex Tax | Non-negative currency amount with at most two decimals. |
+| Retail/Wholesale Price inc Tax | Retail required; wholesale optional. |
+| Tax Rate | `0.1`, `10` or `10%`; blank defaults to 10%. |
+| Opening Stock | Non-negative quantity. Applied only to new SKUs. |
+| Stock Location | Store or warehouse, e.g. `Main Store`. |
+| Bin Location | Shelf/bin inside that location, e.g. `A-02`. |
+| Batch/Expiry Tracking, Active | Yes/No; true/false and 1/0 also work. |
+| Image Filename | Filename only; must match a root file in `images/`. |
+| Created At | Optional ISO date or timestamp. |
 
-Money is converted to integer cents and tax to integer basis points before any
-database write. The import validates the complete file first, then writes parent
-products, variants, categories, suppliers, locations, balances, and opening
-ledger entries in one transaction. Any conflict rolls back the entire import.
+Supported image formats are JPG/JPEG, PNG and WebP. Filename matching is
+case-insensitive, but duplicate names that differ only by case are rejected.
+Several variants may reference the same image. Missing images are warnings:
+the product can still import without an image.
 
-## Images and extensions
+## Validation and import modes
 
-Images are not embedded in the CSV. An optional ZIP may accompany the import;
-its root filenames should exactly match `Image Filename`. The UI must unpack and
-persist those files before assigning local image URIs.
+The complete package is validated before import.
 
-Large or many-to-many supplier catalogs may use a future supplier extension CSV
-with `SKU, Supplier, Supplier Code, Cost ex Tax, Preferred`. Lot opening balances
-may use a future lot extension CSV with
-`SKU, Stock Location, Lot Number, Expiry Date, Quantity`. The base importer does
-not consume either extension yet; supplier receipts can already create supplier
-links and lots through the backend API.
+- **Strict** imports nothing when any error exists.
+- **Valid rows only** skips rows with errors and imports the remaining variants.
+  Package-level safety or manifest errors always block the whole package.
 
-## Backend integration
+Catalog and stock writes are transactional. New SKUs receive opening stock;
+existing SKUs update catalog fields without resetting live stock. Images are
+staged in private app storage and removed when the database import fails.
 
-- `previewProductImportCsv(csvText)` parses and validates without writing.
-- `importProductsCsv(db, csvText)` revalidates and imports atomically.
-- `receiveSupplierStock(db, receipt)` posts a delivery, balances, optional lots,
-  supplier costs, and receipt movements.
-- `adjustStock(db, adjustment)` records a balanced manual adjustment and
-  optional lot.
-- `getLocations`, `getSuppliers`, `getStoreSettings`, and `saveStoreSettings`
-  support setup and stock-location selection.
+Every attempted import creates a persistent report containing package hash,
+mode, parent count, variants added/updated/skipped, images imported/missing,
+warnings and errors. Reports list row number, SKU and reason and can be exported
+as CSV from Import History.
 
-Current register calls remain valid. To sell stock outside the configured
-default location, pass its location ID to the optional final argument of
-`completeSale`; pass the same location to `getProducts`.
+## Creating the ZIP
+
+Place `manifest.json`, `dpos-products-import.csv` and `images/` together, select
+those three items, and create a ZIP. They must be at the ZIP root—not inside an
+extra enclosing folder.
