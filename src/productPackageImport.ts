@@ -24,6 +24,7 @@ import type {
 const PACKAGE_FORMAT = 'dpos-product-import';
 const SUPPORTED_VERSION = 1;
 const MAX_ARCHIVE_BYTES = 250 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_CSV_BYTES = 25 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_ENTRY_COUNT = 20000;
@@ -277,7 +278,14 @@ export async function loadProductImportPackage(
   if (!manifestEntry) {
     throw new Error('The ZIP must contain manifest.json at its root.');
   }
-  const manifest = parseManifest(await manifestEntry.async('text'), issues);
+  if (uncompressedSize(manifestEntry) > MAX_MANIFEST_BYTES) {
+    throw new Error('manifest.json exceeds the 1 MB safety limit.');
+  }
+  const manifestText = await manifestEntry.async('text');
+  if (new TextEncoder().encode(manifestText).byteLength > MAX_MANIFEST_BYTES) {
+    throw new Error('manifest.json exceeds the 1 MB safety limit.');
+  }
+  const manifest = parseManifest(manifestText, issues);
   if (!manifest) {
     return {
       sourceFilename,
@@ -302,11 +310,14 @@ export async function loadProductImportPackage(
     throw new Error(`The ZIP is missing ${manifest.productsFile}.`);
   }
   if (uncompressedSize(csvEntry) > MAX_CSV_BYTES) {
+    throw new Error('Product CSV exceeds the 25 MB safety limit.');
+  }
+  const csvText = await csvEntry.async('text');
+  if (new TextEncoder().encode(csvText).byteLength > MAX_CSV_BYTES) {
     issues.push(
       issue('error', 'csv_too_large', 'Product CSV exceeds the 25 MB limit.'),
     );
   }
-  const csvText = await csvEntry.async('text');
   const preview = previewProductImportCsv(csvText);
   issues.push(
     ...preview.issues.map((item) =>

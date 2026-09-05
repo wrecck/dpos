@@ -121,7 +121,7 @@ export function ProductImportModal({
     loaded?.issues.filter((item) => item.severity === 'warning').length ?? 0;
 
   const runImport = async () => {
-    if (!loaded || rowsToImport.length === 0) return;
+    if (!loaded) return;
     setWorking(true);
     setImportError('');
     try {
@@ -415,10 +415,10 @@ function PackagePage({
           <Pressable
             style={[
               styles.importButton,
-              (rowsToImport === 0 || working) && styles.disabled,
+              working && styles.disabled,
             ]}
             onPress={runImport}
-            disabled={rowsToImport === 0 || working}
+            disabled={working}
           >
             {working ? (
               <ActivityIndicator color={colors.surface} />
@@ -428,7 +428,9 @@ function PackagePage({
             <Text style={styles.importText}>
               {working
                 ? 'Importing package…'
-                : `Import ${rowsToImport} variant${rowsToImport === 1 ? '' : 's'}`}
+                : rowsToImport === 0
+                  ? 'Record validation failure'
+                  : `Import ${rowsToImport} variant${rowsToImport === 1 ? '' : 's'}`}
             </Text>
           </Pressable>
         </View>
