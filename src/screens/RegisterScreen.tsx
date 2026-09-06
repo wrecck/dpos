@@ -46,6 +46,8 @@ export function RegisterScreen({
   const db = useSQLiteContext();
   const { height, width } = useWindowDimensions();
   const isTablet = Math.min(width, height) >= 600;
+  const saleBottomClearance =
+    Platform.OS === 'android' && isTablet ? Math.round(height * 0.05) : 0;
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState('');
@@ -268,6 +270,7 @@ export function RegisterScreen({
             cart={cart}
             itemCount={itemCount}
             totalCents={totalCents}
+            bottomClearance={saleBottomClearance}
             onSetQuantity={setQuantity}
             onCheckout={() => setCheckoutVisible(true)}
           />
@@ -299,6 +302,7 @@ export function RegisterScreen({
         onClose={() => setCheckoutVisible(false)}
         onSetQuantity={setQuantity}
         onCheckout={handleCheckout}
+        bottomClearance={saleBottomClearance}
       />
       <VariantSelectorModal
         group={selectedGroup}
@@ -316,12 +320,14 @@ function TabletCartPanel({
   cart,
   itemCount,
   totalCents,
+  bottomClearance,
   onSetQuantity,
   onCheckout,
 }: {
   cart: CartItem[];
   itemCount: number;
   totalCents: number;
+  bottomClearance: number;
   onSetQuantity: (productId: number, quantity: number) => void;
   onCheckout: () => void;
 }) {
@@ -401,7 +407,12 @@ function TabletCartPanel({
         )}
       </ScrollView>
 
-      <View style={styles.tabletCartFooter}>
+      <View
+        style={[
+          styles.tabletCartFooter,
+          { paddingBottom: spacing.md + bottomClearance },
+        ]}
+      >
         <View style={styles.tabletTotalRow}>
           <Text style={styles.tabletTotalLabel}>Total</Text>
           <Text style={styles.tabletTotalValue}>{formatMoney(totalCents)}</Text>
@@ -573,6 +584,7 @@ type CheckoutProps = {
     paymentMethod: PaymentMethod,
     amountTenderedCents: number,
   ) => Promise<void>;
+  bottomClearance: number;
 };
 
 function CheckoutModal({
@@ -581,6 +593,7 @@ function CheckoutModal({
   onClose,
   onSetQuantity,
   onCheckout,
+  bottomClearance,
 }: CheckoutProps) {
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [cashReceived, setCashReceived] = useState('');
@@ -741,7 +754,12 @@ function CheckoutModal({
           ) : null}
         </ScrollView>
 
-        <View style={styles.checkoutFooter}>
+        <View
+          style={[
+            styles.checkoutFooter,
+            { paddingBottom: spacing.md + bottomClearance },
+          ]}
+        >
           <Pressable
             style={[styles.completeButton, saving && styles.disabledButton]}
             onPress={submit}
