@@ -218,7 +218,7 @@ async function sha256(bytes: Uint8Array): Promise<string> {
   stableBytes.set(bytes);
   const digest = await Crypto.digest(
     Crypto.CryptoDigestAlgorithm.SHA256,
-    stableBytes.buffer,
+    stableBytes,
   );
   return Array.from(new Uint8Array(digest))
     .map((value) => value.toString(16).padStart(2, '0'))
