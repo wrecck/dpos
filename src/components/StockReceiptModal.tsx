@@ -12,6 +12,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -45,6 +46,11 @@ export function StockReceiptModal({
   onReceived,
 }: Props) {
   const db = useSQLiteContext();
+  const { height, width } = useWindowDimensions();
+  const bottomClearance =
+    Platform.OS === 'android' && Math.min(width, height) >= 600
+      ? Math.round(height * 0.05)
+      : 0;
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -378,7 +384,12 @@ export function StockReceiptModal({
           ) : null}
         </ScrollView>
 
-        <View style={styles.footer}>
+        <View
+          style={[
+            styles.footer,
+            { paddingBottom: spacing.md + bottomClearance },
+          ]}
+        >
           <Pressable
             style={[styles.postButton, (saving || !supplierId || !lines.length) && styles.disabled]}
             onPress={submit}
